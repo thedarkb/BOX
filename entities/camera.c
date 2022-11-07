@@ -1,13 +1,12 @@
 #include "../engine.h"
 #include "entities.h"
 
-#define SELF BOX_GetEntity(receiver)
 
-static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver,void* state) {
+static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
 	BOX_Entity* target;
-	if(target=BOX_GetEntity(SELF->hp)) {
-		SELF->x=target->x;
-		SELF->y=target->y;
+	if(target=BOX_GetEntity(receiver->hp)) {
+		receiver->x=target->x;
+		receiver->y=target->y;
 	}
 }
 

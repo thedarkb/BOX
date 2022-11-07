@@ -1,18 +1,33 @@
 #include "../engine.h"
 #include "entities.h"
 
-#define SELF BOX_GetEntity(receiver)//This might segfault if it returns null, but god help you if the game is in a state where that may happen.
+#ifdef EDITOR
+#include <SDL2/SDL.h>
+#endif
 
-static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver,void* state) {
-	BOX_DrawTop(SELF->x,SELF->y,SELF->thumbnail);	
-	if(BOX_GetKey(BOX_UP))SELF->y-=4;
-	if(BOX_GetKey(BOX_DOWN))SELF->y+=4;
-	if(BOX_GetKey(BOX_LEFT))SELF->x-=4;
-	if(BOX_GetKey(BOX_RIGHT))SELF->x+=4;
+#define SELF receiver
+
+extern const uint8_t* k;
+
+static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
+	BOX_DrawTop(SELF->x-2,SELF->y,SELF->thumbnail);	
+	if(BOX_GetKey(BOX_UP) && !BOX_CollisionCheck(receiver,0,-4))SELF->y-=4;
+	if(BOX_GetKey(BOX_DOWN) && !BOX_CollisionCheck(receiver,0,4))SELF->y+=4;
+	if(BOX_GetKey(BOX_LEFT) && !BOX_CollisionCheck(receiver,-4,0))SELF->x-=4;
+	if(BOX_GetKey(BOX_RIGHT) && !BOX_CollisionCheck(receiver,4,0))SELF->x+=4;
+	
+	#ifdef EDITOR
+	if(!(BOX_FrameCount()%15)) {
+		if(k[SDL_SCANCODE_W])SELF->y-=TILESIZE*CHUNKSIZE;
+		if(k[SDL_SCANCODE_S])SELF->y+=TILESIZE*CHUNKSIZE;
+		if(k[SDL_SCANCODE_A])SELF->x-=TILESIZE*CHUNKSIZE;
+		if(k[SDL_SCANCODE_D])SELF->x+=TILESIZE*CHUNKSIZE;
+	}
+	#endif
 }
 
-static void setup(BOX_Signal signal, BOX_entId sender, BOX_entId receiver,void* state) {
-	BOX_EntitySpawn(ent_camera(receiver),SELF->x,SELF->y);
+static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
+	BOX_EntitySpawn(ent_camera(receiver->id),SELF->x,SELF->y);
 }
 
 BOX_Entity* ent_player(char sprite) {
@@ -26,5 +41,7 @@ BOX_Entity* ent_player(char sprite) {
 	me->thumbnail=sprite;
 	me->x=2352;
 	me->y=8539;
+	me->bX=11;
+	me->bY=12;
 	return me;
 }
