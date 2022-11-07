@@ -1,29 +1,33 @@
+#ifndef GRANDPARENT_H
+#define GRANDPARENT_H
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #ifndef TITLE
-#define TITLE "BOX"
+#define TITLE 			"BOX"
 #endif
 
-#define RESX 240
-#define RESY 160
-#define SCALE 4
-#define FRAMERATE 50
+#define RESX 			240
+#define RESY 			160
+#define SCALE			4
+#define FRAMERATE		50
 
-#define CHUNKSIZE 32 //Chunks are square.
+#define CHUNKSIZE 		32 //Chunks are square.
 
-#define ELIMIT 512
-#define HANDLERLIMIT 64
+#define ELIMIT 			512
+#define CHUNK_ELIMIT 	32
+#define HANDLERLIMIT	64
 
-#define SPRITESHEET 160
-#define TILESIZE 16
+#define SPRITESHEET 	160
+#define TILESIZE 		16
 
-#define CAMERASX ((BOX_CameraGet().x/TILESIZE)/CHUNKSIZE)
-#define CAMERASY ((BOX_CameraGet().y/TILESIZE)/CHUNKSIZE)
+#define CAMERASX 		((BOX_CameraGet().x/TILESIZE)/CHUNKSIZE)
+#define CAMERASY 		((BOX_CameraGet().y/TILESIZE)/CHUNKSIZE)
 
-#define NEW(x) malloc(sizeof(x))
+#define NEW(x) 			malloc(sizeof(x))
 
 #define BOX_eprintf(...) { fprintf(stderr, "Error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); }
 #define BOX_panic(...) {fprintf(stderr, "Fatal error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); exit(1);}
@@ -58,26 +62,42 @@ typedef enum {
 
 typedef int BOX_entId;
 
-typedef struct _BOX_SignalHandler {
-	int key;
-	void (*item)(BOX_Signal signal,BOX_entId,BOX_entId,void*);
-	struct _BOX_SignalHandler* next;
-} BOX_SignalHandler;
-
 typedef struct _BOX_Entity {
 	BOX_entId id;
 	unsigned int x,y,bX,bY,hp,armour,thumbnail,class;
 	void* state;
+	#ifdef EDITOR
+	const char* tooltip;//Pops up in the editor when you're browsing entity spawns.
+	#endif
 } BOX_Entity;
+
+typedef struct _BOX_Message {
+	BOX_Signal type; 
+	union{
+		int frame;
+		BOX_Entity* collider,killer,messenger;
+	};
+} BOX_Message;
+
+typedef struct _BOX_SignalHandler {
+	int key;
+	void (*item)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,void*);
+	struct _BOX_SignalHandler* next;
+} BOX_SignalHandler;
+
+typedef struct _BOX_ChunkEntity {
+	int entitySpawner;
+	const char* args;
+	unsigned int x,y;
+} BOX_ChunkEntity;
 
 typedef struct _BOX_Chunk {
 	uint32_t id;
-	char name[12];//Used in the level editor.
 	uint8_t bottom[CHUNKSIZE][CHUNKSIZE];
 	uint8_t top[CHUNKSIZE][CHUNKSIZE];
 	uint8_t clipping[CHUNKSIZE][CHUNKSIZE/8];
 	uint8_t flags;
-	void (*initialiser)(struct _BOX_Chunk* self, int(*spawner)(BOX_Entity*,int,int,int,int));
+	BOX_ChunkEntity entities[CHUNK_ELIMIT];
 } BOX_Chunk;
 
 typedef struct _cameraPoint {
@@ -89,13 +109,14 @@ uint16_t BOX_Rand();
 void BOX_SetSeed(uint32_t in);
 uint16_t BOX_RandHash(int n);
 unsigned int BOX_Diff (int val1, int val2);
+char BOX_CollisionCheck(BOX_Entity* in,int x, int y);
 void BOX_SetCollision(BOX_Chunk* chunk, char x, char y, char z);
 char BOX_GetKey(int codeIn);
 void BOX_SetCamera(BOX_entId in);
 BOX_entId BOX_NewEntityID();
-unsigned int BOX_Hash(char *s);
+uint16_t BOX_Hash(char *s);
 unsigned int BOX_FrameCount();
-BOX_SignalHandler* BOX_RegisterHandler(BOX_Signal list,BOX_entId owner, void(*handler)(BOX_Signal,BOX_entId,BOX_entId,void*));
+BOX_SignalHandler* BOX_RegisterHandler(BOX_Signal list,BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,void*));
 int BOX_RemoveEntity(int id);
 BOX_Entity* BOX_GetEntity(int id);
 int BOX_EntitySpawn(BOX_Entity* in,int x,int y);
@@ -103,3 +124,4 @@ int BOX_ChunkEntitySpawn(BOX_Entity* in, int x, int y, int sX, int sY);
 void BOX_DrawBottom(int x, int y, int id);
 void BOX_DrawTop(int x, int y, int id);
 void BOX_RenderList();
+#endif

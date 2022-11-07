@@ -1,6 +1,8 @@
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL.h>
 
+#define EDENTS
+
 #include "engine.h"
 #include "entities/entities.h"
 #include "world/world.h"
@@ -10,6 +12,11 @@ typedef struct _BOX_SpriteNode {
 	SDL_Texture* sheet;
 	struct _BOX_SpriteNode* next;
 } BOX_SpriteNode;
+
+typedef struct _BOX_EntitySpawnItem {
+	int sx,sy;
+	const char* arg;
+} BOX_EntitySpawnItem;
 
 #define CAMERAX (BOX_CameraGet().x-RESX/2+TILESIZE/2)
 #define CAMERAY (BOX_CameraGet().y-RESY/2+TILESIZE/2)
@@ -32,8 +39,8 @@ unsigned int frameCounter=0;
 BOX_entId nextId=0;
 BOX_entId camera=0;
 
-int sX=0xFFFF;
-int sY=0xFFFF;
+int sX=0x1;
+int sY=0x1;
 
 int entityTally=0;
 int hashAttemptTally=0;
@@ -53,7 +60,6 @@ BOX_CameraPoint BOX_CameraGet() {
 		BOX_wprintf("The camera entity is dead or non-existent!\n");
 		return (BOX_CameraPoint){CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE};
 	}
-
 }
 
 uint16_t BOX_Rand() {
@@ -76,6 +82,54 @@ uint16_t BOX_RandHash(int n) {
 unsigned int BOX_Diff (int val1, int val2) {
 	if (val1>val2) return val1-val2;
 	else return val2-val1;
+	return 0;
+}
+
+char BOX_CollisionCheck(BOX_Entity* in,int x, int y) { //Collision detection between map layer and entity.
+	//chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]
+	#ifdef EDITOR
+	if(k[SDL_SCANCODE_LSHIFT])
+		return 0;
+	#endif
+	
+	for(int yOff=0;yOff<=in->bY;yOff+=in->bY/2) {
+		for(int xOff=0;xOff<=in->bX;xOff+=in->bX/2) {
+			int subX=((in->x%(CHUNKSIZE*TILESIZE))+xOff+x);
+			int subY=((in->y%(CHUNKSIZE*TILESIZE))+yOff+y);
+			int soffX=1;
+			int soffY=1;
+			
+			if(subX<0) {
+				soffX=0;
+				subX+=CHUNKSIZE*TILESIZE;
+			}
+			if(subX>CHUNKSIZE*TILESIZE) {
+				soffX=2;
+				subX-=CHUNKSIZE*TILESIZE;
+			}
+			if(subY<0) {
+				soffY=0;
+				subY+=CHUNKSIZE*TILESIZE;
+			}
+			if(subY>CHUNKSIZE*TILESIZE) {
+				//BOX_panic("Actually works.\n");
+				soffY=2;
+				subY-=CHUNKSIZE*TILESIZE;
+			}
+			subX/=TILESIZE;
+			subY/=TILESIZE;
+			
+			if(subX==CHUNKSIZE || subY==CHUNKSIZE)
+				continue;
+			
+			//printf("Collision: %d\n",chunkCache[1][1]->clipping[subY][subX/8]&(1<<(subX%8)));
+			if(chunkCache[soffX][soffY]->clipping[subY][subX/8]&(1<<(subX%8))) {
+				if(k[SDL_SCANCODE_F5])
+					printf("soffX: %d, soffY: %d, subX: %d, subY: %d\n",soffX,soffY,subX,subY);
+				return 1;
+			}
+		}
+	}
 	return 0;
 }
 
@@ -107,7 +161,7 @@ BOX_entId BOX_NewEntityID() {
 	return nextId;
 }
 
-unsigned int BOX_Hash(char *s) {//Lifted unashamedly from K&R2.
+uint16_t BOX_Hash(char *s) {//Lifted unashamedly from K&R2.
 	unsigned int hashval;
 
 	for (hashval = 0; *s != '\0'; s++)
@@ -119,7 +173,7 @@ unsigned int BOX_FrameCount() {
 	return frameCounter;
 }
 
-BOX_SignalHandler* BOX_RegisterHandler(BOX_Signal list,BOX_entId owner, void(*handler)(BOX_Signal,BOX_entId,BOX_entId,void*)) {
+BOX_SignalHandler* BOX_RegisterHandler(BOX_Signal list,BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,void*)) {
 	BOX_SignalHandler* newHead=malloc(sizeof(BOX_SignalHandler));
 	newHead->item=handler;
 	newHead->key=owner;
@@ -163,6 +217,7 @@ BOX_Entity* BOX_GetEntity(int id) {
 
 int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
 	int index=nextId%ELIMIT;
+	if(!in) return -1;
 	hashAttemptTally++;
 
 	if(!in) {
@@ -181,7 +236,7 @@ int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
 			entityTally++;
 
 			if(spawner) {
-				spawner->item(BOX_SIGNAL_SPAWN,-1,in->id,NULL);
+				spawner->item(BOX_SIGNAL_SPAWN,NULL,in,NULL);//TODO: Replace NULL sender with Worldspawn.
 				free(spawner);				
 			}			
 			return in->id;
@@ -189,7 +244,7 @@ int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
 		index++;
 		hashMissTally++;
 	}
-	BOX_panic("Entity array full! Entity tally: %d, index wrapped to %d\n", index);
+	BOX_panic("Entity array full! Entity tally: %d, index wrapped to %d\n", entityTally,index);
 	return -1;
 }
 
@@ -204,7 +259,7 @@ void BOX_DrawBottom(int x, int y, int id) {
 
 	BOX_SpriteNode* new=NEW(BOX_SpriteNode);
 	new->x=x;
-	new->y=y;//-CAMERAY;
+	new->y=y;
 	new->id=id;
 	new->width=TILESIZE;
 	new->height=TILESIZE;
@@ -215,8 +270,8 @@ void BOX_DrawBottom(int x, int y, int id) {
 
 void BOX_DrawTop(int x, int y, int id) {
 	if(!id) return;
-	if(BOX_Diff(CAMERAX,x)>RESX/2) return;
-	if(BOX_Diff(CAMERAY,y)>RESY/2) return;
+	if(BOX_Diff(CAMERAX,x)>RESX) return;
+	if(BOX_Diff(CAMERAY,y)>RESY) return;
 	BOX_SpriteNode* new=NEW(BOX_SpriteNode);
 	new->x=x;
 	new->y=y;
@@ -249,6 +304,76 @@ void BOX_RenderList() {
 	spriteListEnd=spriteList=walk;
 	if(k[SDL_SCANCODE_SPACE])
 		printf("Number of quads drawn: %d\n",quadCount);
+}
+
+void chunkRefresh() {
+	if(BOX_Diff(sX,CAMERASX)>0 && BOX_Diff(sX,CAMERASX)<2) {//Finds which chunks need regenerating.
+		if(sX<CAMERASX) {
+			for(int x=0;x<2;x++) {
+				for(int y=0;y<3;y++) {
+					chunkCache[x][y]=chunkCache[x+1][y];
+				}
+			}
+			for(int y=-1;y<2;y++) {
+				//chunkCache[2][y+1]=world_gen(CAMERASX+1,CAMERASY+y);
+				BOX_EntitySpawn(ent_worldspawn(&chunkCache[2][y+1],CAMERASX+1,CAMERASY+y),0,0);
+				//if(chunkCache[2][y+1]->initialiser)
+				//	chunkCache[2][y+1]->initialiser(chunkCache[2][y+1],BOX_ChunkEntitySpawn);
+			}
+			sX=CAMERASX;
+			sY=CAMERASY;
+		} else if(sX>CAMERASX) {
+			for(int x=2;x>0;x--) {
+				for(int y=0;y<3;y++) {
+					chunkCache[x][y]=chunkCache[x-1][y];
+				}
+			}
+			for(int y=-1;y<2;y++) {
+				//chunkCache[0][y+1]=world_gen(CAMERASX-1,CAMERASY+y);
+				BOX_EntitySpawn(ent_worldspawn(&chunkCache[0][y+1],CAMERASX-1,CAMERASY+y),0,0);
+				//if(chunkCache[0][y+1]->initialiser)
+				//	chunkCache[0][y+1]->initialiser(chunkCache[0][y+1],BOX_ChunkEntitySpawn);
+			}
+			sX=CAMERASX;
+			sY=CAMERASY;
+		}
+	} else if(BOX_Diff(sY,CAMERASY)>0 && BOX_Diff(sY,CAMERASY)<2) {
+		if(sY<CAMERASY) {
+			for(int y=0;y<2;y++) {
+				for(int x=0;x<3;x++) {
+					chunkCache[x][y]=chunkCache[x][y+1];
+				}
+			}
+			for(int x=-1;x<2;x++) {
+				//chunkCache[x+1][2]=world_gen(CAMERASX+x,CAMERASY+1);
+				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][2],CAMERASX+x,CAMERASY+1),0,0);
+				//if(chunkCache[x+1][2]->initialiser)
+				//	chunkCache[x+1][2]->initialiser(chunkCache[x+1][2],BOX_ChunkEntitySpawn);
+			}
+			sX=CAMERASX;
+			sY=CAMERASY;
+		} else if(sY>CAMERASY) {
+			for(int y=2;y>0;y--) {
+				for(int x=0;x<3;x++) {
+					chunkCache[x][y]=chunkCache[x][y-1];
+				}
+			}
+			for(int x=-1;x<2;x++) {
+				//chunkCache[x+1][0]=world_gen(CAMERASX+x,CAMERASY-1);
+				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][0],CAMERASX+x,CAMERASY-1),0,0);
+				//if(chunkCache[x+1][0]->initialiser)
+				//	chunkCache[x+1][0]->initialiser(chunkCache[x+1][0],BOX_ChunkEntitySpawn);
+			}
+			sX=CAMERASX;
+			sY=CAMERASY;
+		}
+	} else if(BOX_Diff(sX,CAMERASX)>1 || BOX_Diff(sY,CAMERASY)>1){
+		sX=CAMERASX;
+		sY=CAMERASY;
+		for(int x=0;x<3;x++)
+			for(int y=0;y<3;y++)
+				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+	}
 }
 
 static int loop() {
@@ -286,7 +411,7 @@ static int loop() {
 							free(corpse);
 					}
 				}
-				if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,-1,walk->key,NULL);
+				if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,NULL,BOX_GetEntity(walk->key),NULL);//TODO: Replace NULL sender with Worldspawn.
 			} while(walk=walk->next);
 		//}
 	} else {
@@ -295,70 +420,8 @@ static int loop() {
 	if(k[SDL_SCANCODE_SPACE])
 		printf("Ticks total after handling entities: %d\n",SDL_GetTicks()-lastTick);
 
-
-	if(BOX_Diff(sX,CAMERASX)>0 && BOX_Diff(sX,CAMERASX)<2) {//Finds which chunks need regenerating.
-		if(sX<CAMERASX) {
-			for(int x=0;x<2;x++) {
-				for(int y=0;y<3;y++) {
-					chunkCache[x][y]=chunkCache[x+1][y];
-				}
-			}
-			for(int y=-1;y<2;y++) {
-				chunkCache[2][y+1]=world_gen(CAMERASX+1,CAMERASY+y);
-				if(chunkCache[2][y+1]->initialiser)
-					chunkCache[2][y+1]->initialiser(chunkCache[2][y+1],BOX_ChunkEntitySpawn);
-			}
-			sX=CAMERASX;
-			sY=CAMERASY;
-		} else if(sX>CAMERASX) {
-			for(int x=2;x>0;x--) {
-				for(int y=0;y<3;y++) {
-					chunkCache[x][y]=chunkCache[x-1][y];
-				}
-			}
-			for(int y=-1;y<2;y++) {
-				chunkCache[0][y+1]=world_gen(CAMERASX-1,CAMERASY+y);
-				if(chunkCache[0][y+1]->initialiser)
-					chunkCache[0][y+1]->initialiser(chunkCache[0][y+1],BOX_ChunkEntitySpawn);
-			}
-			sX=CAMERASX;
-			sY=CAMERASY;
-		}
-	} else if(BOX_Diff(sY,CAMERASY)>0 && BOX_Diff(sY,CAMERASY)<2) {
-		if(sY<CAMERASY) {
-			for(int y=0;y<2;y++) {
-				for(int x=0;x<3;x++) {
-					chunkCache[x][y]=chunkCache[x][y+1];
-				}
-			}
-			for(int x=-1;x<2;x++) {
-				chunkCache[x+1][2]=world_gen(CAMERASX+x,CAMERASY+1);
-				if(chunkCache[x+1][2]->initialiser)
-					chunkCache[x+1][2]->initialiser(chunkCache[x+1][2],BOX_ChunkEntitySpawn);
-			}
-			sX=CAMERASX;
-			sY=CAMERASY;
-		} else if(sY>CAMERASY) {
-			for(int y=2;y>0;y--) {
-				for(int x=0;x<3;x++) {
-					chunkCache[x][y]=chunkCache[x][y-1];
-				}
-			}
-			for(int x=-1;x<2;x++) {
-				chunkCache[x+1][0]=world_gen(CAMERASX+x,CAMERASY-1);
-				if(chunkCache[x+1][0]->initialiser)
-					chunkCache[x+1][0]->initialiser(chunkCache[x+1][0],BOX_ChunkEntitySpawn);
-			}
-			sX=CAMERASX;
-			sY=CAMERASY;
-		}
-	} else if(BOX_Diff(sX,CAMERASX)>1 || BOX_Diff(sY,CAMERASY)>1){
-		sX=CAMERASX;
-		sY=CAMERASY;
-		for(int x=0;x<3;x++)
-			for(int y=0;y<3;y++)
-				chunkCache[x][y]=world_gen(CAMERASX-1+x,CAMERASY-1+y);
-	}
+	chunkRefresh();
+	
 	if(k[SDL_SCANCODE_SPACE])
 		printf("Ticks total after chunk caching: %d\n",SDL_GetTicks()-lastTick);
 	
@@ -372,6 +435,9 @@ static int loop() {
 	}
 	if(k[SDL_SCANCODE_SPACE])
 		printf("Ticks total after rendering map: %d\n",SDL_GetTicks()-lastTick);
+	
+	if(k[SDL_SCANCODE_C])
+		BOX_CollisionCheck(BOX_GetEntity(1),0,0);
 
 
 	BOX_RenderList();
@@ -391,7 +457,7 @@ static int loop() {
 int main() {
 	rngstate=seed;
 	SDL_Init(SDL_INIT_VIDEO);
-	w=SDL_CreateWindow("Dangerous",0,0,RESX*SCALE,RESY*SCALE,SDL_WINDOW_OPENGL);
+	w=SDL_CreateWindow(TITLE,0,0,RESX*SCALE,RESY*SCALE,SDL_WINDOW_OPENGL);
 	r=SDL_CreateRenderer(w,-1,SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 	printf(SDL_GetError());
 	k=SDL_GetKeyboardState(NULL);

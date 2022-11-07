@@ -1,6 +1,5 @@
 #ifdef EDITOR
-#include <tcl/tcl.h>
-#include <tcl/tk.h>
+#include <gtk/gtk.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <dlfcn.h>
@@ -8,13 +7,34 @@
 #include "../engine.h"
 #include "entities.h"
 
-#define SELF BOX_GetEntity(receiver)
-#define SCALEFACTOR 2
+#define ASYNC_BEGIN static int scrLine = 0; switch(scrLine) { case 0:
+#define ASYNC_END scrLine=0;} return
+#define YIELD do {scrLine=__LINE__;return; case __LINE__:;} while (0)
+
+#define SELF BOX_GetEntity(receiver->id)
+#define SCALEFACTOR 1.5f
 #define BIT(x) (1<<x)
+
+enum mapflags {
+	WS_CHUNK,
+	WS_MODIFIED,
+};
 
 int playerId=0;
 
-Tcl_Interp* interp=NULL;
+extern int sX;
+extern int sY;
+
+extern size_t worldArray_len;
+extern BOX_Chunk* worldArray;
+extern BOX_Entity* entSet[ELIMIT];
+
+BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY);
+
+GtkBuilder* builder;
+GObject* toolWin;
+
+//Tcl_Interp* interp=NULL;
 extern SDL_Renderer* r;
 extern SDL_Window* w;
 extern BOX_Chunk* chunkCache[3][3];
@@ -31,10 +51,13 @@ int layerSelection=0;
 int selectedTileX=-1;
 int selectedTileY=-1;
 
+extern void chunkRefresh(void);
+
 static void rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
 	SDL_Rect out={x,y,w,h};
 	SDL_SetRenderDrawColor(edRend,r,g,b,a);
 	SDL_RenderFillRect(edRend,&out);
+	SDL_SetRenderDrawColor(edRend,0,0,0,255);
 }
 
 static void fill(uint8_t in[CHUNKSIZE][CHUNKSIZE], int id, int field, int x, int y) {
@@ -67,32 +90,325 @@ static int spawnerShim(BOX_Entity* in, int x, int y, int sX, int sY) {
 	return id++;
 }
 
-static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver,void* state) {
+G_MODULE_EXPORT void openEntityList(GtkButton* button, gpointer data) {
+	char* detokenised=malloc(CHUNK_ELIMIT*512);
+	detokenised[0]='\0';
+	gtk_widget_show(GTK_WIDGET(gtk_builder_get_object(builder,"entListWin")));
+	for(int i=0;i<CHUNK_ELIMIT;i++) {
+		char line[512];
+		if(localMap.entities[i].entitySpawner>-1) {
+			if(localMap.entities[i].args)
+				sprintf(line,"%d,%d,%s:%s\n",localMap.entities[i].x,localMap.entities[i].y,editor_entities[localMap.entities[i].entitySpawner](0,0,"",NULL)->tooltip,localMap.entities[i].args);
+			else
+				sprintf(line,"%d,%d,%s:\n",localMap.entities[i].x,localMap.entities[i].y,editor_entities[localMap.entities[i].entitySpawner](0,0,"",NULL)->tooltip);
+			strcat(detokenised,line);
+		}
+		else
+			strcat(detokenised,"\n");
+		
+	}
+	gtk_text_buffer_set_text(GTK_TEXT_BUFFER(gtk_builder_get_object(builder,"entityListText")),(const gchar*)detokenised,-1);
+}
+
+G_MODULE_EXPORT void hideEntities(GtkButton* button, gpointer data) {
+	gtk_widget_hide(GTK_WIDGET(gtk_builder_get_object(builder,"entListWin")));	
+}
+
+G_MODULE_EXPORT void tokeniseEntities(GtkButton* button, gpointer data) {
+	int c=0;
+	char *text;
+	char *token;
+	char *list[CHUNK_ELIMIT];
+	GtkTextIter start,end;
+	
+	for(int i=0;i<CHUNK_ELIMIT;i++) {
+		localMap.entities[i].entitySpawner=-1;
+		if(localMap.entities[i].args)
+			free((void*)localMap.entities[i].args);
+		localMap.entities[i].args=NULL;
+		localMap.entities[i].x=localMap.entities[i].y=0;
+	}
+	
+	gtk_text_buffer_get_start_iter(GTK_TEXT_BUFFER(gtk_builder_get_object(builder,"entityListText")), &start);
+	gtk_text_buffer_get_end_iter(GTK_TEXT_BUFFER(gtk_builder_get_object(builder,"entityListText")), &end);
+	text=gtk_text_buffer_get_text(GTK_TEXT_BUFFER(gtk_builder_get_object(builder,"entityListText")), &start, &end, FALSE);
+	token=strtok(text,"\n");
+	
+	if(!token) 		
+		return;
+
+	while (token!=NULL && c<CHUNK_ELIMIT) {
+		list[c++]=token;
+		printf("%s\n",token);
+		token=strtok(NULL,"\n");
+	}
+	for(int i=0;i<CHUNK_ELIMIT && i<c;i++) {
+		char entityName[255];
+		int tX,tY;
+		int spawnId=-1;
+		
+		token=strtok(list[i],":");
+		if(!token)
+			continue;
+		if(sscanf(token,"%d,%d,%s",&tX,&tY,entityName)!=3) {
+			sprintf(entityName,"Invalid spawn definition:\n\n%s\n\nExpected <X Tile>,<Y Tile>,<Entity Type>:<Arguments>",token);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Spawn Definition Error", (const char*)&entityName[0], edWin);
+			continue;		
+		}
+		for(int j=0;j<EDITOR_ENTCOUNT;j++) {
+			if(!strcmp(editor_entities[j](0,0,"",&localMap)->tooltip,entityName)) {
+				spawnId=j;
+				break;				
+			}
+		}
+		if(spawnId==-1) {
+			char errorMsg[255];
+			sprintf(errorMsg,"Entity \"%s\" not found.",entityName);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Spawn Definition Error", (const char*)&errorMsg[0], edWin);
+			continue;		
+		}
+		localMap.entities[i].x=tX;
+		localMap.entities[i].y=tY;
+		localMap.entities[i].entitySpawner=spawnId;
+		token=strtok(NULL,":");
+		if(!token) BOX_panic("Nope.\n");
+		if(token) {
+			for(int j=0;token[j];j++) {
+				if(token[j]!=' ') {
+					localMap.entities[i].args=malloc(strlen(token)+1);
+					strcpy((char *__restrict)localMap.entities[i].args,(const char*)token);					
+				}				
+			}
+		}
+	}
+}
+G_MODULE_EXPORT void deleteChunk(GtkButton* button, gpointer data) {
+	for(int i=0;i<worldArray_len;i++) {
+		if(worldArray[i].id==localMap.id) {
+			worldArray[i].id=UINT_MAX;
+			worldArray[i].flags=0;
+		}
+	}
+	localMap.id=UINT_MAX;
+	localMap.flags=0;
+	BOX_EntitySpawn(ent_worldspawn(&target,sX,sY),0,0);
+	localMap=*target;
+}
+
+G_MODULE_EXPORT void killEntities(GtkButton* button, gpointer data) {
+	for(int i=3;i<ELIMIT;i++) {//This is dirty and works off the assumption that the editor is in slot 0, the player in slot 1, and the camera in slot 2.
+		if(entSet[i]){
+			if(entSet[i]->state) {
+				free(entSet[i]->state);				
+			}
+			free(entSet[i]);
+			entSet[i]=NULL;
+		}
+	}	
+}
+
+G_MODULE_EXPORT void spawnMapEntities(GtkButton* button, gpointer data) {
+	for(int i=0;i<CHUNK_ELIMIT;i++) {
+		if(localMap.entities[i].entitySpawner>-1) {
+			if(localMap.entities[i].args) {
+				BOX_ChunkEntitySpawn(
+					editor_entities[i](
+						sX*CHUNKSIZE+localMap.entities[i].x,
+						sY*CHUNKSIZE+localMap.entities[i].y,
+						localMap.entities[i].args,
+						&localMap
+					),
+					localMap.entities[i].x*TILESIZE,
+					localMap.entities[i].y*TILESIZE,
+					sX,
+					sY
+				);
+			} else {
+				BOX_ChunkEntitySpawn(
+					editor_entities[i](
+						sX*CHUNKSIZE+localMap.entities[i].x,
+						sY*CHUNKSIZE+localMap.entities[i].y,
+						NULL,
+						&localMap
+					),
+					localMap.entities[i].x*TILESIZE,
+					localMap.entities[i].y*TILESIZE,
+					sX,
+					sY
+				);
+			}
+		}
+	}	
+}
+
+G_MODULE_EXPORT void screenChange(GtkButton* button, gpointer data) {
+	//This is really dirty, it just sends the player to the selected chunk so the camera and the editor follow.
+	int diffSx=gtk_adjustment_get_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"sX")));
+	int diffSy=gtk_adjustment_get_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"sY")));
+	
+	if(diffSx<sX) {
+		BOX_GetEntity(1)->x=diffSx*CHUNKSIZE*TILESIZE+CHUNKSIZE/2*TILESIZE;
+	} else if(diffSx>sY) {
+		BOX_GetEntity(1)->x=diffSx*CHUNKSIZE*TILESIZE+CHUNKSIZE/2*TILESIZE;
+	}
+	if(diffSy<sY) {
+		BOX_GetEntity(1)->y=diffSy*CHUNKSIZE*TILESIZE+CHUNKSIZE/2*TILESIZE;
+	} else if(diffSy>sY) {
+		BOX_GetEntity(1)->y=diffSy*CHUNKSIZE*TILESIZE+CHUNKSIZE/2*TILESIZE;
+	}
+}
+
+G_MODULE_EXPORT void chunkDumper(GtkButton* button, gpointer data) {
+	int new_len=0;
+	FILE* out=fopen("world/chunks.h","w");
+	if(!out) {
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Error Writing File", "Unable to write to world/chunks.h", edWin);
+		return;
+	}
+
+	fprintf(out,"/*This file is autogenerated by the editor tool. Manual editing is permitted.*/\n");
+	fprintf(out,"BOX_Chunk _worldArray[]={\n");
+	
+	for(int h=0;h<worldArray_len;h++) {
+		if(worldArray[h].id==UINT32_MAX)
+			continue;
+		if(!(worldArray[h].flags&BIT(WS_MODIFIED)) && !(worldArray[h].flags&BIT(WS_CHUNK)))
+			continue;
+		
+		new_len++;
+		fprintf(out,"\t{\n");
+		fprintf(out,"\t\t%d,\n",worldArray[h].id);
+		fprintf(out,"/*Bottom Layer*/\n");
+		fprintf(out,"\t\t{\n");
+		for(int y=0;y<CHUNKSIZE;y++) {
+			fprintf(out,"\t\t\t{");
+			for(int x=0;x<CHUNKSIZE;x++) {
+				fprintf(out,"%d,",worldArray[h].bottom[y][x]);
+			}
+			fprintf(out,"},\n");
+		}
+		fprintf(out,"\t\t},\n");
+		fprintf(out,"/*Top Layer*/\n");
+		fprintf(out,"\t\t{\n");
+		for(int y=0;y<CHUNKSIZE;y++) {
+			fprintf(out,"\t\t\t{");
+			for(int x=0;x<CHUNKSIZE;x++) {
+				fprintf(out,"%d,",worldArray[h].top[y][x]);
+			}
+			fprintf(out,"},\n");
+		}
+		fprintf(out,"\t\t},\n");
+		fprintf(out,"/*Clipping Layer*/\n");
+		fprintf(out,"\t\t{\n");
+		for(int y=0;y<CHUNKSIZE;y++) {
+			fprintf(out,"\t\t\t{");
+			for(int x=0;x<CHUNKSIZE/8;x++) {
+				fprintf(out,"%d,",worldArray[h].clipping[y][x]);
+			}
+			fprintf(out,"},\n");
+		}
+		fprintf(out,"\t\t},\n");
+		fprintf(out,"\t\t%d,//Flags\n",worldArray[h].flags);
+		fprintf(out,"/*Entity Spawns*/\n");
+		fprintf(out,"\t\t{\n");
+		for(int i=0;i<CHUNK_ELIMIT;i++) {
+			if(worldArray[h].entities[i].args)
+				fprintf(out,"\t\t\t{%d,\"%s\",%d,%d},\n",worldArray[h].entities[i].entitySpawner,worldArray[h].entities[i].args,worldArray[h].entities[i].x,worldArray[h].entities[i].y);
+			else
+				fprintf(out,"\t\t\t{%d,NULL,%d,%d},\n",worldArray[h].entities[i].entitySpawner,worldArray[h].entities[i].x,worldArray[h].entities[i].y);
+		}
+		fprintf(out,"\t\t}\n");
+		fprintf(out,"\t},\n");
+	}
+	fprintf(out,"};\n");
+	fprintf(out,"\nsize_t worldArray_len=%d;\n\n",new_len);
+	fprintf(out,"BOX_Chunk* worldArray=&_worldArray[0];\n");
+	fclose(out);
+	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Operation Successful", "World has been written to world/chunks.h", edWin);
+}
+
+static void cloneVerifyLocalmap() {
+	char statflag=0;
+
+	for(int i=0;i<worldArray_len;i++) {
+		if(worldArray[i].id==localMap.id) {
+			worldArray[i]=localMap;
+			return;
+			statflag=1;
+		}
+	}
+	if(!statflag) {
+		worldArray_len++;
+		worldArray=realloc(worldArray,worldArray_len*sizeof(worldArray[0]));
+		worldArray[worldArray_len-1]=localMap;
+		chunkRefresh();
+	}
+	
+	target=chunkCache[1][1];
+	localMap=*chunkCache[1][1];
+	
+	for(int j=0;j<CHUNK_ELIMIT;j++) {
+		char* newString=malloc(strlen(localMap.entities[j].args)+1);
+		strcpy(newString,localMap.entities[j].args);
+		localMap.entities[j].args=(const char*)newString;
+	}
+}
+
+static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
 	int mX, mY,button;
 	static int debounce;
-	if(!(BOX_FrameCount()%2)) return;
+	char messages[255];
+	
+	for(int i=0;i<4;i++)
+		gtk_main_iteration_do(FALSE);
+	
+	//printf("%d\n",localMap.flags);
+			
+	ASYNC_BEGIN;
 
 	SELF->x=BOX_CameraGet().x;
 	SELF->y=BOX_CameraGet().y;
 	if(!BOX_FrameCount()) return;
-
-	if(target!=chunkCache[1][1]) {
-		//TODO RESET EVERYTHING WHEN THIS HAPPENS.
+	
+	/*Handle a change in the active chunk.*/
+	if(target!=chunkCache[1][1]) {		
 		target=chunkCache[1][1];
 		localMap=*chunkCache[1][1];
-		localMap.clipping[0][1]=1;//TEMPORARY
+		
+		gtk_adjustment_set_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"sX")),sX);
+		gtk_adjustment_set_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"sY")),sY);
 	}
-
+	/*End of active chunk change handling.*/
+	
+	/*Propagate changes made in GTK toolbox to SDL editing window.*/
+	tileSelection=gtk_adjustment_get_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"tileNo")));
+	toolSelection=gtk_combo_box_get_active(GTK_COMBO_BOX(gtk_builder_get_object(builder,"toolSel")));
+	layerSelection=gtk_combo_box_get_active(GTK_COMBO_BOX(gtk_builder_get_object(builder,"layerSel")));
+	selectedTileX=gtk_adjustment_get_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"selX")));
+	selectedTileY=gtk_adjustment_get_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"selY")));
+	
+	if((localMap.flags&BIT(WS_MODIFIED)) || (localMap.flags&BIT(WS_CHUNK))) {
+		gtk_widget_set_sensitive(GTK_WIDGET(gtk_builder_get_object(builder,"chunkDelete")),TRUE);
+	} else {
+		gtk_widget_set_sensitive(GTK_WIDGET(gtk_builder_get_object(builder,"chunkDelete")),FALSE);
+	}
+	sprintf(messages,"%d",localMap.id);
+	gtk_label_set_text(GTK_LABEL(gtk_builder_get_object(builder,"chunkNum")),(const char*)&messages[0]);
+	/*-----------------------------------------------------------*/
+	
+	/*Handle clicks in the editing window.*/
 	if(button=SDL_GetMouseState(&mX,&mY)) {
 		mY/=SCALEFACTOR;
 		mX/=SCALEFACTOR;
 		if(mX>CHUNKSIZE*TILESIZE+TILESIZE  && BOX_FrameCount()>debounce+10) {
 			tileSelection+=mY/TILESIZE-16;
-			Tcl_UpdateLinkedVar(interp,"tileNo");
+			gtk_adjustment_set_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"tileNo")),tileSelection);
+			
 		} else if(mX<CHUNKSIZE*TILESIZE && mY<CHUNKSIZE*TILESIZE) {
 			int tileVal=0;
 			switch(toolSelection) {
 				case 0://Stamp tool.
+					localMap.flags|=BIT(WS_MODIFIED);
 					if(button&SDL_BUTTON(SDL_BUTTON_LEFT))
 						tileVal=tileSelection;
 					else if(button&SDL_BUTTON(SDL_BUTTON_RIGHT))
@@ -109,6 +425,7 @@ static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver
 					}
 				break;
 				case 1://Fill tool.
+					localMap.flags|=BIT(WS_MODIFIED);
 					if(button&SDL_BUTTON(SDL_BUTTON_LEFT))
 						tileVal=tileSelection;
 					else if(button&SDL_BUTTON(SDL_BUTTON_RIGHT))
@@ -118,6 +435,14 @@ static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver
 					else if(layerSelection==2)
 						fill(localMap.top,tileVal,localMap.top[mY/TILESIZE][mX/TILESIZE],mX/TILESIZE,mY/TILESIZE);
 				break;
+				case 2://Select tool.
+					if(button&SDL_BUTTON(SDL_BUTTON_LEFT)) {
+						selectedTileX=mX/TILESIZE;
+						selectedTileY=mY/TILESIZE;
+						gtk_adjustment_set_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"selX")),selectedTileX);
+						gtk_adjustment_set_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"selY")),selectedTileY);
+					}
+				break;
 						
 				default:
 				break;
@@ -125,13 +450,16 @@ static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver
 		}
 		debounce=BOX_FrameCount();
 	}
+	/*------------------------------------*/
 
+	/*Draw tile pallet.*/
 	draw(103,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE/2);
 	for(int i=0;i<32;i++) {
 		draw(tileSelection-16+i,CHUNKSIZE*TILESIZE+TILESIZE,i*TILESIZE);
 	}
-
-
+	/*----------------*/
+	
+	/*Draw each of the map layers in turn, depending on selection.*/
 	for(int y=0;y<CHUNKSIZE;y++) {
 		for(int x=0;x<CHUNKSIZE;x++) {
 			draw(localMap.bottom[y][x],x*TILESIZE,y*TILESIZE);
@@ -148,6 +476,7 @@ static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver
 	else if(layerSelection!=4 && layerSelection!=0) {
 		rect(0,0,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE,0,0,0,200);
 	}
+	YIELD;
 	if(layerSelection==4 || layerSelection==2) {
 		for(int y=0;y<CHUNKSIZE;y++) {
 			for(int x=0;x<CHUNKSIZE;x++) {
@@ -155,79 +484,50 @@ static void frameHandler(BOX_Signal signal, BOX_entId sender, BOX_entId receiver
 			}
 		}
 	}
-	if(layerSelection==4 || layerSelection==3 && target->initialiser) {
-		localMap.initialiser(&localMap,spawnerShim);
+	if((layerSelection==4 || layerSelection==3) /*&& localMap.initialiser*/) {
+		for(int i=0;i<CHUNK_ELIMIT;i++) {
+			if(localMap.entities[i].entitySpawner>-1) {
+				BOX_Entity* temp=editor_entities[localMap.entities[i].entitySpawner](localMap.entities[i].x,localMap.entities[i].y,localMap.entities[i].args,&localMap);
+				draw(temp->thumbnail,localMap.entities[i].x*TILESIZE,localMap.entities[i].y*TILESIZE);
+				free(temp);
+			}
+		}
 	}
-
-
-	if(Tcl_Eval(interp,"update\nlistboxen")!=TCL_OK){
-		BOX_eprintf("%s\n",Tcl_GetStringResult(interp));
+	/*----------------------------------------------------------*/
+	
+	if(toolSelection==2) { //Draw a square on selected tile when select selected.
+		rect(selectedTileX*TILESIZE,selectedTileY*TILESIZE,TILESIZE,TILESIZE,150,150,255,200);
 	}
+	
+	
 	*target=localMap;
+	cloneVerifyLocalmap();
+	
 	SDL_RenderPresent(edRend);
 	SDL_RenderClear(edRend);
+	ASYNC_END;
 }
 
-static int refreshScript(ClientData clientData, Tcl_Interp* state, int argc, char** argv) {
-	char filepath[255]={0};
-	void* code=NULL;
-	static void* oldHandle=NULL;
-	void (*initialiserNext)(struct _BOX_Chunk* self, int(*spawner)(BOX_Entity*,int,int,int,int))=NULL;
-	if(oldHandle) {
-		dlclose(oldHandle);
+static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
+	BOX_Chunk* oldWorldArray=worldArray;
+	
+	worldArray=malloc(sizeof(BOX_Chunk)*worldArray_len);
+	memcpy(worldArray,oldWorldArray,worldArray_len*sizeof(BOX_Chunk));
+	for(int i=0;i<worldArray_len;i++) {//Fixes up the entity argument strings so they can be edited.
+		for(int j=0;j<CHUNK_ELIMIT;j++) {
+			char* newString=malloc(strlen(worldArray[i].entities[j].args)+1);
+			strcpy(newString,worldArray[i].entities[j].args);
+			worldArray[i].entities[j].args=(const char*)newString;
+		}
 	}
-
-	if(argc<2) return 1;
-	code=dlopen("./temp.so",RTLD_NOW);
-	printf(dlerror());
-
-	if(!code) {
-		Tcl_Eval(interp,"tk_messageBox -message \"Compilation failed.\"");
-		localMap.initialiser=NULL;
-		return 0;
-	}
-	initialiserNext=dlsym(code,argv[1]);
-	if(!initialiserNext) {
-		Tcl_Eval(interp,"tk_messageBox -message \"Function not found, is its name the same as the filename excluding the extension?\"");
-		localMap.initialiser=NULL;
-		return 0;
-	}
-	oldHandle=code;
-	localMap.initialiser=initialiserNext;
-
-	return 0;
-}
-
-static int buildScript(ClientData clientData, Tcl_Interp* state, int argc, char** argv) {
-	char filepath[255]={0};
-
-	if(argc<2) return 1;
-
-	strcat(filepath,"gcc -o temp.so -DSDK -shared -fPIC world/");
-	strcat(filepath,argv[1]);
-	strcat(filepath,".c -Wl,-R -Wl,. -L. -lentities");
-	printf("%s\n",filepath);
-	system(filepath);
-
-	return 0;
-}
-
-static void setup(BOX_Signal signal, BOX_entId sender, BOX_entId receiver,void* state) {
-	interp = Tcl_CreateInterp(); 
-	if (Tcl_Init(interp) != TCL_OK) { 
-		BOX_eprintf("Unable to start TCL interpreter, exiting.\n");
-		return;
-	}
-	if(Tcl_EvalFile(interp, "mapeditor.tcl") != TCL_OK) {
-		printf("Starting GUI event loop failed!\n");
-		BOX_eprintf("%s\n",Tcl_GetStringResult(interp));
-	}
-
-	Tcl_LinkVar(interp,"tileNo",(char*)&tileSelection,TCL_LINK_INT);
-	Tcl_LinkVar(interp,"layer",(char*)&layerSelection,TCL_LINK_INT);
-	Tcl_LinkVar(interp,"tool",(char*)&toolSelection,TCL_LINK_INT);
-	Tcl_CreateCommand(interp, "refreshScript",(void*)refreshScript, NULL, NULL);
-	Tcl_CreateCommand(interp, "buildScript",(void*)buildScript, NULL, NULL);
+	
+	gtk_init(NULL,NULL);
+	builder=gtk_builder_new();
+	gtk_builder_add_from_file(builder,"toolbox.glade",NULL);
+	
+	toolWin=gtk_builder_get_object(builder,"toolWin");
+	gtk_widget_show(GTK_WIDGET(toolWin));
+    gtk_builder_connect_signals(builder, NULL);	
 
 	playerId=BOX_EntitySpawn(ent_player(77),6000,4000);
 }
@@ -243,11 +543,11 @@ BOX_Entity* ent_editor() {
 	SDL_RenderSetScale(r,2,2);
 	SDL_SetWindowSize(w, 480, 320);
 
-	edWin=SDL_CreateWindow(TITLE" Map Editor", 0, 640, TILESIZE*CHUNKSIZE*2+TILESIZE*4,TILESIZE*CHUNKSIZE*2, SDL_WINDOW_OPENGL);
+	edWin=SDL_CreateWindow(TITLE" Map Editor", 0, 640, TILESIZE*CHUNKSIZE*1.5f+TILESIZE*4,TILESIZE*CHUNKSIZE*1.5f, SDL_WINDOW_OPENGL);
 	edRend=SDL_CreateRenderer(edWin,-1,SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 	SDL_Surface* loader=IMG_Load("sheet.png");
 	nsheet=SDL_CreateTextureFromSurface(edRend, loader);
-	SDL_RenderSetScale(edRend,2,2);
+	SDL_RenderSetScale(edRend,1.5f,1.5f);
 	SDL_SetRenderDrawBlendMode(edRend,SDL_BLENDMODE_BLEND);
 	
 	ident=1;
