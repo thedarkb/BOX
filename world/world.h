@@ -8,5 +8,3 @@
 
 BOX_Chunk* world_gen(unsigned int sX, unsigned int sY);
 BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY);
-
-

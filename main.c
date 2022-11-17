@@ -1,6 +1,10 @@
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #define EDENTS
 
 #include "engine.h"
@@ -28,7 +32,7 @@ SDL_Event keyIn;
 SDL_Texture* sheet;
 const uint8_t* k;
 
-BOX_SignalHandler* signalHandlers[BOX_SIGNAL_BOUNDS]={NULL};
+BOX_SignalHandler* signalHandlers=NULL;
 BOX_Entity* entSet[ELIMIT]={NULL};
 BOX_Chunk* chunkCache[3][3]={NULL};
 
@@ -36,6 +40,7 @@ unsigned int seed=42;
 unsigned int rngstate;
 
 unsigned int frameCounter=0;
+unsigned int tileAnimClock=0;
 BOX_entId nextId=0;
 BOX_entId camera=0;
 
@@ -85,6 +90,34 @@ unsigned int BOX_Diff (int val1, int val2) {
 	return 0;
 }
 
+void BOX_ResolveEntityCollisions() {
+	if(signalHandlers) {
+	BOX_SignalHandler* walk=signalHandlers;
+	do {
+		BOX_Entity* collider;
+		if(collider=BOX_GetEntity(walk->key)) {
+			BOX_SignalHandler* subWalk=signalHandlers;
+			do {
+				BOX_Entity* target;
+				if(target=BOX_GetEntity(subWalk->key)) {
+					char xflag=0;
+					char yflag=0;
+					if(target==collider)
+						continue;
+					
+					if(collider->x<target->x+target->bX && collider->x>target->x)
+						xflag=1;
+					if(collider->y<target->y+target->bY && collider->y>target->y)
+						yflag=1;
+				}
+			} while(subWalk=subWalk->next);	
+		}			
+	} while(walk=walk->next);
+	} else {
+		BOX_panic("Nothing to do!\n");
+	}	
+}
+
 char BOX_CollisionCheck(BOX_Entity* in,int x, int y) { //Collision detection between map layer and entity.
 	//chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]
 	#ifdef EDITOR
@@ -122,10 +155,7 @@ char BOX_CollisionCheck(BOX_Entity* in,int x, int y) { //Collision detection bet
 			if(subX==CHUNKSIZE || subY==CHUNKSIZE)
 				continue;
 			
-			//printf("Collision: %d\n",chunkCache[1][1]->clipping[subY][subX/8]&(1<<(subX%8)));
 			if(chunkCache[soffX][soffY]->clipping[subY][subX/8]&(1<<(subX%8))) {
-				if(k[SDL_SCANCODE_F5])
-					printf("soffX: %d, soffY: %d, subX: %d, subY: %d\n",soffX,soffY,subX,subY);
 				return 1;
 			}
 		}
@@ -173,12 +203,12 @@ unsigned int BOX_FrameCount() {
 	return frameCounter;
 }
 
-BOX_SignalHandler* BOX_RegisterHandler(BOX_Signal list,BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,void*)) {
+BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message*)) {
 	BOX_SignalHandler* newHead=malloc(sizeof(BOX_SignalHandler));
 	newHead->item=handler;
 	newHead->key=owner;
-	newHead->next=signalHandlers[list];
-	signalHandlers[list]=newHead;
+	newHead->next=signalHandlers;
+	signalHandlers=newHead;
 	return newHead;
 }
 
@@ -215,6 +245,31 @@ BOX_Entity* BOX_GetEntity(int id) {
 	}
 }
 
+/*Returns first entity in table with specified tag. Returns subsequent entities if called with NULL.*/
+BOX_Entity* BOX_GetEntityByTag(const char* tag) {
+	static int lastId;
+	static const char* lastTag;
+	int i;
+	
+	if(tag) {
+		lastTag=tag;
+		lastId=-1;
+	} else {
+		tag=lastTag;
+		if(!lastTag)
+			return NULL;
+	}
+	for(i=lastId+1;i<ELIMIT;i++) {
+		if(entSet[i])
+			if(entSet[i]->tag)
+				if(!strcmp(tag,entSet[i]->tag)){
+					lastId=i;
+					return entSet[i];
+				}
+	}
+	return NULL;
+}
+
 int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
 	int index=nextId%ELIMIT;
 	if(!in) return -1;
@@ -227,17 +282,15 @@ int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
 	in->id=nextId;
 	while(index<ELIMIT*2) {
 		if(!entSet[index%ELIMIT]) {
-			BOX_SignalHandler* spawner=signalHandlers[BOX_SIGNAL_SPAWN];
-			signalHandlers[BOX_SIGNAL_SPAWN]=NULL;
 			in->x=x;
 			in->y=y;
 			entSet[index%ELIMIT]=in;
 			nextId++;
 			entityTally++;
 
-			if(spawner) {
-				spawner->item(BOX_SIGNAL_SPAWN,NULL,in,NULL);//TODO: Replace NULL sender with Worldspawn.
-				free(spawner);				
+			if(in->postbox) {
+				in->postbox(BOX_SIGNAL_SPAWN,NULL,in,NULL);//TODO: Replace NULL sender with Worldspawn.
+				BOX_RegisterHandler(in->id,in->postbox);
 			}			
 			return in->id;
 		}
@@ -307,8 +360,11 @@ void BOX_RenderList() {
 }
 
 void chunkRefresh() {
+	int regen=0;
+	
 	if(BOX_Diff(sX,CAMERASX)>0 && BOX_Diff(sX,CAMERASX)<2) {//Finds which chunks need regenerating.
 		if(sX<CAMERASX) {
+			regen=1;
 			for(int x=0;x<2;x++) {
 				for(int y=0;y<3;y++) {
 					chunkCache[x][y]=chunkCache[x+1][y];
@@ -323,6 +379,7 @@ void chunkRefresh() {
 			sX=CAMERASX;
 			sY=CAMERASY;
 		} else if(sX>CAMERASX) {
+			regen=1;
 			for(int x=2;x>0;x--) {
 				for(int y=0;y<3;y++) {
 					chunkCache[x][y]=chunkCache[x-1][y];
@@ -339,6 +396,7 @@ void chunkRefresh() {
 		}
 	} else if(BOX_Diff(sY,CAMERASY)>0 && BOX_Diff(sY,CAMERASY)<2) {
 		if(sY<CAMERASY) {
+			regen=1;
 			for(int y=0;y<2;y++) {
 				for(int x=0;x<3;x++) {
 					chunkCache[x][y]=chunkCache[x][y+1];
@@ -353,6 +411,7 @@ void chunkRefresh() {
 			sX=CAMERASX;
 			sY=CAMERASY;
 		} else if(sY>CAMERASY) {
+			regen=1;
 			for(int y=2;y>0;y--) {
 				for(int x=0;x<3;x++) {
 					chunkCache[x][y]=chunkCache[x][y-1];
@@ -368,6 +427,7 @@ void chunkRefresh() {
 			sY=CAMERASY;
 		}
 	} else if(BOX_Diff(sX,CAMERASX)>1 || BOX_Diff(sY,CAMERASY)>1){
+		regen=1;
 		sX=CAMERASX;
 		sY=CAMERASY;
 		for(int x=0;x<3;x++)
@@ -376,7 +436,8 @@ void chunkRefresh() {
 	}
 }
 
-static int loop() {
+int 
+loop() {
 	static unsigned int lastTick=0;
 
 	if(!frameCounter) {
@@ -384,36 +445,31 @@ static int loop() {
 		#ifdef EDITOR
 		BOX_EntitySpawn(ent_editor(),241,161);
 		#else
-		BOX_EntitySpawn(ent_player(77),6000,4000);
+		BOX_EntitySpawn(ent_player(77),0,0);
 		#endif
 	}
 
 	int delay=1000/FRAMERATE-(SDL_GetTicks()-lastTick);
 	if(delay>0 && lastTick) SDL_Delay(delay);
 	#ifndef EDITOR
-	else if(lastTick)
-		BOX_wprintf("Game loop too slow by %d ticks!\n",SDL_GetTicks()-lastTick-1000/FRAMERATE);
+	//else if(lastTick)
+	//	BOX_wprintf("Game loop too slow by %d ticks!\n",SDL_GetTicks()-lastTick-1000/FRAMERATE);
 	#endif
 	lastTick=SDL_GetTicks();
-
-	if(signalHandlers[BOX_SIGNAL_FRAME]) {
-		BOX_SignalHandler* walk=signalHandlers[BOX_SIGNAL_FRAME];
-		//if(!BOX_GetEntity(signalHandlers[BOX_SIGNAL_FRAME]->key)) {
-		//	BOX_SignalHandler* corpse=walk;
-		//	signalHandlers[BOX_SIGNAL_FRAME]=corpse;
-		//	free(corpse);
-		//} else {
-			do {
-				if(walk->next) {
-					if(!BOX_GetEntity(walk->next->key)) {
-							BOX_SignalHandler* corpse=walk->next;
-							walk->next=walk->next->next;
-							free(corpse);
-					}
+	
+	BOX_ResolveEntityCollisions();
+	if(signalHandlers) {
+		BOX_SignalHandler* walk=signalHandlers;
+		do {
+			if(walk->next) {
+				if(!BOX_GetEntity(walk->next->key)) {
+						BOX_SignalHandler* corpse=walk->next;
+						walk->next=walk->next->next;
+						free(corpse);
 				}
-				if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,NULL,BOX_GetEntity(walk->key),NULL);//TODO: Replace NULL sender with Worldspawn.
-			} while(walk=walk->next);
-		//}
+			}
+			if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,NULL,BOX_GetEntity(walk->key),&frameCounter);//TODO: Replace NULL sender with Worldspawn.
+		} while(walk=walk->next);
 	} else {
 		BOX_panic("Nothing to do!\n");
 	}
@@ -427,10 +483,18 @@ static int loop() {
 	
 	int cameraYf=BOX_CameraGet().y;
 	int cameraXf=BOX_CameraGet().x;
-	for(int y=(cameraYf-(RESY/2))/TILESIZE;y<TILESIZE+(cameraYf-RESY/2)/TILESIZE;y++) {
-		for(int x=(cameraXf-(RESX/2))/TILESIZE;x<TILESIZE+(cameraXf-RESX/2)/TILESIZE;x++) {
-			BOX_DrawBottom(x*TILESIZE,y*TILESIZE,chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->bottom[y%CHUNKSIZE][x%CHUNKSIZE]);
-			BOX_DrawTop(x*TILESIZE,y*TILESIZE,chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->top[y%CHUNKSIZE][x%CHUNKSIZE]);
+	for(int y=(cameraYf-(RESY/2))/TILESIZE;y<TILESIZE+(cameraYf-RESY/2)/TILESIZE+TILESIZE;y++) {
+		for(int x=(cameraXf-(RESX/2))/TILESIZE;x<TILESIZE+(cameraXf-RESX/2)/TILESIZE+TILESIZE;x++) {
+			int botTile=chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->bottom[y%CHUNKSIZE][x%CHUNKSIZE];
+			int topTile=chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->top[y%CHUNKSIZE][x%CHUNKSIZE];
+			
+			if(botTile&ANIMFLAG)
+				botTile+=tileAnimClock;
+			if(topTile&ANIMFLAG)
+				topTile+=tileAnimClock;
+			
+			BOX_DrawBottom(x*TILESIZE,y*TILESIZE,botTile&TILEMASK);
+			BOX_DrawTop(x*TILESIZE,y*TILESIZE,topTile&TILEMASK);
 		}
 	}
 	if(k[SDL_SCANCODE_SPACE])
@@ -446,10 +510,18 @@ static int loop() {
 		printf("Ticks total after drawing: %d\n",SDL_GetTicks()-lastTick);
 	//lastTick=SDL_GetTicks();
 	if(k[SDL_SCANCODE_SPACE] && !hashMissTally) printf("Entities: %d\tNo hash misses.\n",entityTally);
-	if(k[SDL_SCANCODE_SPACE] && hashMissTally) printf("Entities: %d\tHash miss average:%d\n",entityTally,hashAttemptTally/hashMissTally);
+	if(k[SDL_SCANCODE_SPACE] && hashMissTally) {
+		printf("Entities: %d\tHash miss average:%d\n",entityTally,hashAttemptTally/hashMissTally);
+	}
 	if(k[SDL_SCANCODE_SPACE])
 		SDL_Delay(2000);
-
+		
+	if(frameCounter%5==0) {
+		if(tileAnimClock+1<4)
+			tileAnimClock++;
+		else
+			tileAnimClock=0;
+	}	
 	frameCounter++;
 	return 0;
 }
@@ -461,13 +533,16 @@ int main() {
 	r=SDL_CreateRenderer(w,-1,SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 	printf(SDL_GetError());
 	k=SDL_GetKeyboardState(NULL);
-	memset(signalHandlers,0,sizeof signalHandlers);
 
 	SDL_Surface* loader=IMG_Load("sheet.png");
 	sheet=SDL_CreateTextureFromSurface(r, loader);
 	SDL_FreeSurface(loader);
 
 	SDL_RenderSetScale(r,SCALE,SCALE);
+	
+	#ifdef __EMSCRIPTEN__
+	emscripten_set_main_loop(loop,0,1);
+	#endif
 
 	while(1){
 		if(loop()) return 0;

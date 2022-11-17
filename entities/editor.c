@@ -28,6 +28,7 @@ extern int sY;
 extern size_t worldArray_len;
 extern BOX_Chunk* worldArray;
 extern BOX_Entity* entSet[ELIMIT];
+extern unsigned int tileAnimClock;
 
 BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY);
 
@@ -50,6 +51,7 @@ int toolSelection=0;
 int layerSelection=0;
 int selectedTileX=-1;
 int selectedTileY=-1;
+int animated=0;
 
 extern void chunkRefresh(void);
 
@@ -212,7 +214,7 @@ G_MODULE_EXPORT void spawnMapEntities(GtkButton* button, gpointer data) {
 		if(localMap.entities[i].entitySpawner>-1) {
 			if(localMap.entities[i].args) {
 				BOX_ChunkEntitySpawn(
-					editor_entities[i](
+					editor_entities[localMap.entities[i].entitySpawner](
 						sX*CHUNKSIZE+localMap.entities[i].x,
 						sY*CHUNKSIZE+localMap.entities[i].y,
 						localMap.entities[i].args,
@@ -225,7 +227,7 @@ G_MODULE_EXPORT void spawnMapEntities(GtkButton* button, gpointer data) {
 				);
 			} else {
 				BOX_ChunkEntitySpawn(
-					editor_entities[i](
+					editor_entities[localMap.entities[i].entitySpawner](
 						sX*CHUNKSIZE+localMap.entities[i].x,
 						sY*CHUNKSIZE+localMap.entities[i].y,
 						NULL,
@@ -248,7 +250,7 @@ G_MODULE_EXPORT void screenChange(GtkButton* button, gpointer data) {
 	
 	if(diffSx<sX) {
 		BOX_GetEntity(1)->x=diffSx*CHUNKSIZE*TILESIZE+CHUNKSIZE/2*TILESIZE;
-	} else if(diffSx>sY) {
+	} else if(diffSx>sX) {
 		BOX_GetEntity(1)->x=diffSx*CHUNKSIZE*TILESIZE+CHUNKSIZE/2*TILESIZE;
 	}
 	if(diffSy<sY) {
@@ -354,7 +356,7 @@ static void cloneVerifyLocalmap() {
 	}
 }
 
-static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
+static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message* state) {
 	int mX, mY,button;
 	static int debounce;
 	char messages[255];
@@ -386,6 +388,7 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 	layerSelection=gtk_combo_box_get_active(GTK_COMBO_BOX(gtk_builder_get_object(builder,"layerSel")));
 	selectedTileX=gtk_adjustment_get_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"selX")));
 	selectedTileY=gtk_adjustment_get_value(GTK_ADJUSTMENT(gtk_builder_get_object(builder,"selY")));
+	animated=gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder,"animToggle")));
 	
 	if((localMap.flags&BIT(WS_MODIFIED)) || (localMap.flags&BIT(WS_CHUNK))) {
 		gtk_widget_set_sensitive(GTK_WIDGET(gtk_builder_get_object(builder,"chunkDelete")),TRUE);
@@ -409,9 +412,11 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 			switch(toolSelection) {
 				case 0://Stamp tool.
 					localMap.flags|=BIT(WS_MODIFIED);
-					if(button&SDL_BUTTON(SDL_BUTTON_LEFT))
+					if(button&SDL_BUTTON(SDL_BUTTON_LEFT)) {
 						tileVal=tileSelection;
-					else if(button&SDL_BUTTON(SDL_BUTTON_RIGHT))
+						if(animated)
+							tileVal|=ANIMFLAG;
+					} else if(button&SDL_BUTTON(SDL_BUTTON_RIGHT))
 						tileVal=0;
 					if(layerSelection==0)
 						localMap.bottom[mY/TILESIZE][mX/TILESIZE]=tileVal;
@@ -462,7 +467,10 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 	/*Draw each of the map layers in turn, depending on selection.*/
 	for(int y=0;y<CHUNKSIZE;y++) {
 		for(int x=0;x<CHUNKSIZE;x++) {
-			draw(localMap.bottom[y][x],x*TILESIZE,y*TILESIZE);
+			if(localMap.bottom[y][x]&ANIMFLAG)
+				draw((localMap.bottom[y][x]+tileAnimClock)&TILEMASK,x*TILESIZE,y*TILESIZE);
+			else
+				draw(localMap.bottom[y][x]&TILEMASK,x*TILESIZE,y*TILESIZE);
 		}
 	}
 	if(layerSelection==1) {
@@ -480,7 +488,10 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 	if(layerSelection==4 || layerSelection==2) {
 		for(int y=0;y<CHUNKSIZE;y++) {
 			for(int x=0;x<CHUNKSIZE;x++) {
-				draw(localMap.top[y][x],x*TILESIZE,y*TILESIZE);
+				if(localMap.top[y][x]&ANIMFLAG)
+					draw((localMap.top[y][x]+tileAnimClock)&TILEMASK,x*TILESIZE,y*TILESIZE);
+				else
+					draw(localMap.top[y][x]&TILEMASK,x*TILESIZE,y*TILESIZE);
 			}
 		}
 	}
@@ -515,6 +526,8 @@ static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,vo
 	memcpy(worldArray,oldWorldArray,worldArray_len*sizeof(BOX_Chunk));
 	for(int i=0;i<worldArray_len;i++) {//Fixes up the entity argument strings so they can be edited.
 		for(int j=0;j<CHUNK_ELIMIT;j++) {
+			if(!worldArray[i].entities[j].args)
+				continue;
 			char* newString=malloc(strlen(worldArray[i].entities[j].args)+1);
 			strcpy(newString,worldArray[i].entities[j].args);
 			worldArray[i].entities[j].args=(const char*)newString;
@@ -532,13 +545,24 @@ static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,vo
 	playerId=BOX_EntitySpawn(ent_player(77),6000,4000);
 }
 
+static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message* state) {
+	switch(signal) {
+		case BOX_SIGNAL_FRAME:
+			frameHandler(signal,sender,receiver,state);
+		break;
+		case BOX_SIGNAL_SPAWN:
+			setup(signal,sender,receiver,state);
+		break;
+	}		
+}
+
 BOX_Entity* ent_editor() {
 	static int ident;
 	if(ident) BOX_panic("Attempt to spawn two map editors in one session.\n");
 	BOX_Entity* me=NEW(BOX_Entity);
 	memset(me,sizeof (BOX_Entity),0);
-	BOX_RegisterHandler(BOX_SIGNAL_FRAME, BOX_NewEntityID(),frameHandler);
-	BOX_RegisterHandler(BOX_SIGNAL_SPAWN, BOX_NewEntityID(),setup);
+	me->postbox=signalSwitchboard;
+	me->tag=NULL;
 	
 	SDL_RenderSetScale(r,2,2);
 	SDL_SetWindowSize(w, 480, 320);

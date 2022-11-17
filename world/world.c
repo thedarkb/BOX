@@ -176,6 +176,8 @@ BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY) {
 	},
 };
 
+	sX=(sX%5)+5;
+
 	for(int i=0;i<worldArray_len;i++) {
 		if(worldArray[i].id==WORLD_CHUNKID(sX,sY)) {
 			worldArray[i].flags=BIT(WS_CHUNK);
@@ -190,5 +192,39 @@ BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY) {
 		
 	genCache[cacheX][cacheY].id=WORLD_CHUNKID(sX,sY);
 	*self=&genCache[cacheX][cacheY];
+	
+
+	
+	for(int i=0;i<CHUNK_ELIMIT;i++) {
+		if(genCache[cacheX][cacheY].entities[i].entitySpawner>-1) {
+			if(genCache[cacheX][cacheY].entities[i].args) {
+				BOX_ChunkEntitySpawn(
+					editor_entities[i](
+						sX*CHUNKSIZE+genCache[cacheX][cacheY].entities[i].x,
+						sY*CHUNKSIZE+genCache[cacheX][cacheY].entities[i].y,
+						genCache[cacheX][cacheY].entities[i].args,
+						&genCache[cacheX][cacheY]
+					),
+					genCache[cacheX][cacheY].entities[i].x*TILESIZE,
+					genCache[cacheX][cacheY].entities[i].y*TILESIZE,
+					sX,
+					sY
+				);
+			} else {
+				BOX_ChunkEntitySpawn(
+					editor_entities[i](
+						sX*CHUNKSIZE+genCache[cacheX][cacheY].entities[i].x,
+						sY*CHUNKSIZE+genCache[cacheX][cacheY].entities[i].y,
+						NULL,
+						&genCache[cacheX][cacheY]
+					),
+					genCache[cacheX][cacheY].entities[i].x*TILESIZE,
+					genCache[cacheX][cacheY].entities[i].y*TILESIZE,
+					sX,
+					sY
+				);
+			}
+		}
+	}
 	return NULL;
 }
