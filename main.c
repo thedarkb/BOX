@@ -1,5 +1,6 @@
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL.h>
+#include <assert.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -22,6 +23,12 @@ typedef struct _BOX_EntitySpawnItem {
 	const char* arg;
 } BOX_EntitySpawnItem;
 
+typedef struct _BOX_EventQueueNode {
+	BOX_Signal signal;
+	int target,sender;
+	struct _BOX_EventQueueNode* next;
+} BOX_EventQueueNode;
+
 #define CAMERAX (BOX_CameraGet().x-RESX/2+TILESIZE/2)
 #define CAMERAY (BOX_CameraGet().y-RESY/2+TILESIZE/2)
 
@@ -33,6 +40,7 @@ SDL_Texture* sheet;
 const uint8_t* k;
 
 BOX_SignalHandler* signalHandlers=NULL;
+BOX_EventQueueNode* messageBuffer=NULL;
 BOX_Entity* entSet[ELIMIT]={NULL};
 BOX_Chunk* chunkCache[3][3]={NULL};
 
@@ -87,6 +95,16 @@ uint16_t BOX_RandHash(int n) {
 unsigned int BOX_Diff (int val1, int val2) {
 	if (val1>val2) return val1-val2;
 	else return val2-val1;
+	return 0;
+}
+
+int BOX_SendMessage(int sender, int target, BOX_Signal type, BOX_Message in) {
+	BOX_Entity *tP, *sP;
+	if((tP=BOX_GetEntity(target)) && (sP=BOX_GetEntity(sender))) 
+		tP->postbox(type,sP,tP,in);
+	else
+		return -1;
+	
 	return 0;
 }
 
@@ -203,7 +221,7 @@ unsigned int BOX_FrameCount() {
 	return frameCounter;
 }
 
-BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message*)) {
+BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message)) {
 	BOX_SignalHandler* newHead=malloc(sizeof(BOX_SignalHandler));
 	newHead->item=handler;
 	newHead->key=owner;
@@ -261,8 +279,8 @@ BOX_Entity* BOX_GetEntityByTag(const char* tag) {
 	}
 	for(i=lastId+1;i<ELIMIT;i++) {
 		if(entSet[i])
-			if(entSet[i]->tag)
-				if(!strcmp(tag,entSet[i]->tag)){
+			if(entSet[i]->tooltip)
+				if(!strcmp(tag,entSet[i]->tooltip)){
 					lastId=i;
 					return entSet[i];
 				}
@@ -289,7 +307,7 @@ int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
 			entityTally++;
 
 			if(in->postbox) {
-				in->postbox(BOX_SIGNAL_SPAWN,NULL,in,NULL);//TODO: Replace NULL sender with Worldspawn.
+				in->postbox(BOX_SIGNAL_SPAWN,NULL,in,MSG_EMPTY);//TODO: Replace NULL sender with Worldspawn.
 				BOX_RegisterHandler(in->id,in->postbox);
 			}			
 			return in->id;
@@ -371,10 +389,7 @@ void chunkRefresh() {
 				}
 			}
 			for(int y=-1;y<2;y++) {
-				//chunkCache[2][y+1]=world_gen(CAMERASX+1,CAMERASY+y);
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[2][y+1],CAMERASX+1,CAMERASY+y),0,0);
-				//if(chunkCache[2][y+1]->initialiser)
-				//	chunkCache[2][y+1]->initialiser(chunkCache[2][y+1],BOX_ChunkEntitySpawn);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -386,10 +401,7 @@ void chunkRefresh() {
 				}
 			}
 			for(int y=-1;y<2;y++) {
-				//chunkCache[0][y+1]=world_gen(CAMERASX-1,CAMERASY+y);
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[0][y+1],CAMERASX-1,CAMERASY+y),0,0);
-				//if(chunkCache[0][y+1]->initialiser)
-				//	chunkCache[0][y+1]->initialiser(chunkCache[0][y+1],BOX_ChunkEntitySpawn);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -403,10 +415,7 @@ void chunkRefresh() {
 				}
 			}
 			for(int x=-1;x<2;x++) {
-				//chunkCache[x+1][2]=world_gen(CAMERASX+x,CAMERASY+1);
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][2],CAMERASX+x,CAMERASY+1),0,0);
-				//if(chunkCache[x+1][2]->initialiser)
-				//	chunkCache[x+1][2]->initialiser(chunkCache[x+1][2],BOX_ChunkEntitySpawn);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -418,10 +427,7 @@ void chunkRefresh() {
 				}
 			}
 			for(int x=-1;x<2;x++) {
-				//chunkCache[x+1][0]=world_gen(CAMERASX+x,CAMERASY-1);
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][0],CAMERASX+x,CAMERASY-1),0,0);
-				//if(chunkCache[x+1][0]->initialiser)
-				//	chunkCache[x+1][0]->initialiser(chunkCache[x+1][0],BOX_ChunkEntitySpawn);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -445,7 +451,7 @@ loop() {
 		#ifdef EDITOR
 		BOX_EntitySpawn(ent_editor(),241,161);
 		#else
-		BOX_EntitySpawn(ent_player(77),0,0);
+		BOX_EntitySpawn(ent_player(77),0,128);
 		#endif
 	}
 
@@ -468,7 +474,7 @@ loop() {
 						free(corpse);
 				}
 			}
-			if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,NULL,BOX_GetEntity(walk->key),&frameCounter);//TODO: Replace NULL sender with Worldspawn.
+			if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,NULL,BOX_GetEntity(walk->key),MSG_FRAME(frameCounter));//TODO: Replace NULL sender with Worldspawn.
 		} while(walk=walk->next);
 	} else {
 		BOX_panic("Nothing to do!\n");
@@ -483,8 +489,8 @@ loop() {
 	
 	int cameraYf=BOX_CameraGet().y;
 	int cameraXf=BOX_CameraGet().x;
-	for(int y=(cameraYf-(RESY/2))/TILESIZE;y<TILESIZE+(cameraYf-RESY/2)/TILESIZE+TILESIZE;y++) {
-		for(int x=(cameraXf-(RESX/2))/TILESIZE;x<TILESIZE+(cameraXf-RESX/2)/TILESIZE+TILESIZE;x++) {
+	for(int y=(cameraYf-(RESY/2))/TILESIZE-TILESIZE/2;y<TILESIZE+(cameraYf-RESY/2)/TILESIZE;y++) {
+		for(int x=(cameraXf-(RESX/2))/TILESIZE-TILESIZE/2;x<TILESIZE+TILESIZE/2+(cameraXf-RESX/2)/TILESIZE;x++) {
 			int botTile=chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->bottom[y%CHUNKSIZE][x%CHUNKSIZE];
 			int topTile=chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->top[y%CHUNKSIZE][x%CHUNKSIZE];
 			
@@ -521,7 +527,8 @@ loop() {
 			tileAnimClock++;
 		else
 			tileAnimClock=0;
-	}	
+	}
+	tileAnimClock=0;//Disable tile animations as atlas space is needed.
 	frameCounter++;
 	return 0;
 }

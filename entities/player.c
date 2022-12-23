@@ -13,32 +13,36 @@ enum {
 	NOPE,UP,DOWN,LEFT,RIGHT
 };
 
-static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
+static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	static int animationTimer;
-	static int lastDirection;
+	static int lastDirection=DOWN;
 	char isMoving=0;
-	char frame=56;//Position of player sprite on spritesheet.
+	unsigned char frame=186;//Position of player sprite on spritesheet.
 	
-	if(BOX_GetKey(BOX_UP) && !BOX_CollisionCheck(receiver,0,-4)) {
-		SELF->y-=2;
+	if(BOX_GetKey(BOX_UP) /*!BOX_CollisionCheck(receiver,0,-4)*/) {
+		if(!BOX_CollisionCheck(receiver,0,-4))
+			SELF->y-=2;
 		isMoving=UP;
 	}
-	if(BOX_GetKey(BOX_DOWN) && !BOX_CollisionCheck(receiver,0,4)) {
-		SELF->y+=2;
+	if(BOX_GetKey(BOX_DOWN)  /*!BOX_CollisionCheck(receiver,0,4)*/) {
+		if(!BOX_CollisionCheck(receiver,0,4))
+			SELF->y+=2;
 		isMoving=DOWN;
 	}
-	if(BOX_GetKey(BOX_LEFT) && !BOX_CollisionCheck(receiver,-4,0)) {
-		SELF->x-=2;
+	if(BOX_GetKey(BOX_LEFT) /*!BOX_CollisionCheck(receiver,-4,0)*/) {
+		if(!BOX_CollisionCheck(receiver,-4,0))
+			SELF->x-=2;
 		isMoving=LEFT;
 	}
-	if(BOX_GetKey(BOX_RIGHT) && !BOX_CollisionCheck(receiver,4,0)) {
-		SELF->x+=2;
+	if(BOX_GetKey(BOX_RIGHT) /*!BOX_CollisionCheck(receiver,4,0)*/) {
+		if(!BOX_CollisionCheck(receiver,4,0))
+			SELF->x+=2;
 		isMoving=RIGHT;
 	}
 	if(isMoving)
 		lastDirection=isMoving;
 		
-	if(isMoving) {
+	if(isMoving) {/*
 		switch(animationTimer%4) {
 			case 0:
 				frame+=10;
@@ -46,7 +50,11 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 			case 2:
 				frame+=20;
 			break;
-		}
+		}*/
+		if(animationTimer%2==0)
+			frame+=10;
+		else
+			frame+=20;
 		BOX_DrawTop(SELF->x-2,SELF->y,frame+lastDirection-1);
 	} else { 
 		BOX_DrawTop(SELF->x-2,SELF->y,frame+lastDirection-1);
@@ -56,17 +64,17 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 			SELF->x-=CHUNKSIZE*TILESIZE*5;
 	
 	
-	if(*(int*)state%15==0)
+	if(state.frame%15==0)
 		animationTimer++;
 }
 
-static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message* state) {
+static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	SELF->x=CHUNKSIZE*TILESIZE*5;
-	SELF->y=CHUNKSIZE*TILESIZE*5;
+	SELF->y=CHUNKSIZE*TILESIZE*5+30;
 	BOX_EntitySpawn(ent_camera(receiver->id),SELF->x,SELF->y);
 }
 
-static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message* state) {
+static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	switch(signal) {
 		case BOX_SIGNAL_FRAME:
 			frameHandler(signal,sender,receiver,state);
@@ -88,11 +96,9 @@ BOX_Entity* ent_player(char sprite) {
 	printf("Player spawned with ID: %d\n",BOX_NewEntityID());
 
 	me->thumbnail=sprite;
-	me->tag="Player";
 	me->x=CHUNKSIZE*TILESIZE*3;
 	me->y=CHUNKSIZE*TILESIZE*3;
 	me->bX=11;
 	me->bY=12;
-	me->tag="Player";
 	return me;
 }
