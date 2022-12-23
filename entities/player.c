@@ -9,38 +9,95 @@
 
 extern const uint8_t* k;
 
-static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
-	BOX_DrawTop(SELF->x-2,SELF->y,SELF->thumbnail);	
-	if(BOX_GetKey(BOX_UP) && !BOX_CollisionCheck(receiver,0,-4))SELF->y-=4;
-	if(BOX_GetKey(BOX_DOWN) && !BOX_CollisionCheck(receiver,0,4))SELF->y+=4;
-	if(BOX_GetKey(BOX_LEFT) && !BOX_CollisionCheck(receiver,-4,0))SELF->x-=4;
-	if(BOX_GetKey(BOX_RIGHT) && !BOX_CollisionCheck(receiver,4,0))SELF->x+=4;
+enum {
+	NOPE,UP,DOWN,LEFT,RIGHT
+};
+
+static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
+	static int animationTimer;
+	static int lastDirection=DOWN;
+	char isMoving=0;
+	unsigned char frame=186;//Position of player sprite on spritesheet.
 	
-	#ifdef EDITOR
-	if(!(BOX_FrameCount()%15)) {
-		if(k[SDL_SCANCODE_W])SELF->y-=TILESIZE*CHUNKSIZE;
-		if(k[SDL_SCANCODE_S])SELF->y+=TILESIZE*CHUNKSIZE;
-		if(k[SDL_SCANCODE_A])SELF->x-=TILESIZE*CHUNKSIZE;
-		if(k[SDL_SCANCODE_D])SELF->x+=TILESIZE*CHUNKSIZE;
+	if(BOX_GetKey(BOX_UP) /*!BOX_CollisionCheck(receiver,0,-4)*/) {
+		if(!BOX_CollisionCheck(receiver,0,-4))
+			SELF->y-=2;
+		isMoving=UP;
 	}
-	#endif
+	if(BOX_GetKey(BOX_DOWN)  /*!BOX_CollisionCheck(receiver,0,4)*/) {
+		if(!BOX_CollisionCheck(receiver,0,4))
+			SELF->y+=2;
+		isMoving=DOWN;
+	}
+	if(BOX_GetKey(BOX_LEFT) /*!BOX_CollisionCheck(receiver,-4,0)*/) {
+		if(!BOX_CollisionCheck(receiver,-4,0))
+			SELF->x-=2;
+		isMoving=LEFT;
+	}
+	if(BOX_GetKey(BOX_RIGHT) /*!BOX_CollisionCheck(receiver,4,0)*/) {
+		if(!BOX_CollisionCheck(receiver,4,0))
+			SELF->x+=2;
+		isMoving=RIGHT;
+	}
+	if(isMoving)
+		lastDirection=isMoving;
+		
+	if(isMoving) {/*
+		switch(animationTimer%4) {
+			case 0:
+				frame+=10;
+			break;
+			case 2:
+				frame+=20;
+			break;
+		}*/
+		if(animationTimer%2==0)
+			frame+=10;
+		else
+			frame+=20;
+		BOX_DrawTop(SELF->x-2,SELF->y,frame+lastDirection-1);
+	} else { 
+		BOX_DrawTop(SELF->x-2,SELF->y,frame+lastDirection-1);
+	}
+	
+	if(SELF->x>CHUNKSIZE*TILESIZE*10+TILESIZE*CHUNKSIZE-1)
+			SELF->x-=CHUNKSIZE*TILESIZE*5;
+	
+	
+	if(state.frame%15==0)
+		animationTimer++;
 }
 
-static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,void* state) {
+static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
+	SELF->x=CHUNKSIZE*TILESIZE*5;
+	SELF->y=CHUNKSIZE*TILESIZE*5+30;
 	BOX_EntitySpawn(ent_camera(receiver->id),SELF->x,SELF->y);
 }
+
+static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
+	switch(signal) {
+		case BOX_SIGNAL_FRAME:
+			frameHandler(signal,sender,receiver,state);
+		break;
+		case BOX_SIGNAL_SPAWN:
+			setup(signal,sender,receiver,state);
+		break;
+		default:
+		break;
+	}		
+}
+
 
 BOX_Entity* ent_player(char sprite) {
 	BOX_Entity* me=NEW(BOX_Entity);
 	*me=(BOX_Entity){0};
 	
-	BOX_RegisterHandler(BOX_SIGNAL_FRAME, BOX_NewEntityID(),frameHandler);
-	BOX_RegisterHandler(BOX_SIGNAL_SPAWN, BOX_NewEntityID(),setup);
+	me->postbox=signalSwitchboard;
 	printf("Player spawned with ID: %d\n",BOX_NewEntityID());
 
 	me->thumbnail=sprite;
-	me->x=2352;
-	me->y=8539;
+	me->x=CHUNKSIZE*TILESIZE*3;
+	me->y=CHUNKSIZE*TILESIZE*3;
 	me->bX=11;
 	me->bY=12;
 	return me;

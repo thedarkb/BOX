@@ -1,5 +1,5 @@
-#ifndef GRANDPARENT_H
-#define GRANDPARENT_H
+#ifndef ENGINE_H
+#define ENGINE_H
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -15,7 +15,7 @@
 #define SCALE			4
 #define FRAMERATE		50
 
-#define CHUNKSIZE 		32 //Chunks are square.
+#define CHUNKSIZE 		16 //Chunks are square.
 
 #define ELIMIT 			512
 #define CHUNK_ELIMIT 	32
@@ -24,16 +24,20 @@
 #define SPRITESHEET 	160
 #define TILESIZE 		16
 
+#define ANIMFLAG		0x80
+#define TILEMASK		0x7F
+
 #define CAMERASX 		((BOX_CameraGet().x/TILESIZE)/CHUNKSIZE)
 #define CAMERASY 		((BOX_CameraGet().y/TILESIZE)/CHUNKSIZE)
 
 #define NEW(x) 			malloc(sizeof(x))
+#define ARRAY_LEN(x) (sizeof (x) / sizeof (x[0]))
 
-#define BOX_eprintf(...) { fprintf(stderr, "Error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); }
-#define BOX_panic(...) {fprintf(stderr, "Fatal error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); exit(1);}
+#define BOX_eprintf(...) 	{fprintf(stderr, "Error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); }
+#define BOX_panic(...) 		{fprintf(stderr, "Fatal error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); exit(1);}
 
 #ifndef DISABLEWARNINGS
-#define BOX_wprintf(...) {fprintf(stderr, "Warning on frame %d from %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__);}
+#define BOX_wprintf(...) 	{fprintf(stderr, "Warning on frame %d from %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__);}
 #else
 #define BOX_wprintf(...)
 #endif
@@ -62,26 +66,30 @@ typedef enum {
 
 typedef int BOX_entId;
 
+struct _BOX_Message;
+
 typedef struct _BOX_Entity {
 	BOX_entId id;
+	void (*postbox)(BOX_Signal signal,struct _BOX_Entity*,struct _BOX_Entity*,struct _BOX_Message);
 	unsigned int x,y,bX,bY,hp,armour,thumbnail,class;
 	void* state;
-	#ifdef EDITOR
 	const char* tooltip;//Pops up in the editor when you're browsing entity spawns.
-	#endif
 } BOX_Entity;
 
 typedef struct _BOX_Message {
 	BOX_Signal type; 
 	union{
-		int frame;
-		BOX_Entity* collider,killer,messenger;
+		int frame,collider,killer;
 	};
 } BOX_Message;
 
+#define MSG_FRAME(x) (BOX_Message){.type=BOX_SIGNAL_FRAME,.frame=x}
+#define MSG_COLLIDER(x) (BOX_Message){.type=BOX_SIGNAL_COLLISION,.collider=x}
+#define MSG_EMPTY (BOX_Message){.type=-1,.collider=-1}
+
 typedef struct _BOX_SignalHandler {
 	int key;
-	void (*item)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,void*);
+	void (*item)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message);
 	struct _BOX_SignalHandler* next;
 } BOX_SignalHandler;
 
@@ -116,9 +124,10 @@ void BOX_SetCamera(BOX_entId in);
 BOX_entId BOX_NewEntityID();
 uint16_t BOX_Hash(char *s);
 unsigned int BOX_FrameCount();
-BOX_SignalHandler* BOX_RegisterHandler(BOX_Signal list,BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,void*));
+BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message));
 int BOX_RemoveEntity(int id);
 BOX_Entity* BOX_GetEntity(int id);
+BOX_Entity* BOX_GetEntityByTag(const char* tag);
 int BOX_EntitySpawn(BOX_Entity* in,int x,int y);
 int BOX_ChunkEntitySpawn(BOX_Entity* in, int x, int y, int sX, int sY);
 void BOX_DrawBottom(int x, int y, int id);
