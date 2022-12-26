@@ -75,6 +75,10 @@ BOX_CameraPoint BOX_CameraGet() {
 	}
 }
 
+BOX_entId BOX_Camera() {
+	return camera;
+}
+
 uint16_t BOX_Rand() {
 	rngstate ^= rngstate >> 7;
 	rngstate ^= rngstate << 9;
@@ -300,17 +304,17 @@ int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
 	in->id=nextId;
 	while(index<ELIMIT*2) {
 		if(!entSet[index%ELIMIT]) {
+			int rval=nextId;
 			in->x=x;
 			in->y=y;
 			entSet[index%ELIMIT]=in;
-			nextId++;
 			entityTally++;
-
+			nextId++;
 			if(in->postbox) {
-				in->postbox(BOX_SIGNAL_SPAWN,NULL,in,MSG_EMPTY);//TODO: Replace NULL sender with Worldspawn.
 				BOX_RegisterHandler(in->id,in->postbox);
-			}			
-			return in->id;
+				in->postbox(BOX_SIGNAL_SPAWN,NULL,in,MSG_EMPTY);//TODO: Replace NULL sender with Worldspawn.				
+			}		
+			return rval;
 		}
 		index++;
 		hashMissTally++;
@@ -528,7 +532,7 @@ loop() {
 		else
 			tileAnimClock=0;
 	}
-	tileAnimClock=0;//Disable tile animations as atlas space is needed.
+//	tileAnimClock=0;//Disable tile animations as atlas space is needed.
 	frameCounter++;
 	return 0;
 }

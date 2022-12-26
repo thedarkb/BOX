@@ -16,41 +16,49 @@ enum {
 static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	static int animationTimer;
 	static int lastDirection=DOWN;
-	char isMoving=0;
+	static char isMoving=0;
 	unsigned char frame=186;//Position of player sprite on spritesheet.
+	unsigned char movSpd=2,keyCount=0;
 	
-	if(BOX_GetKey(BOX_UP) /*!BOX_CollisionCheck(receiver,0,-4)*/) {
-		if(!BOX_CollisionCheck(receiver,0,-4))
-			SELF->y-=2;
-		isMoving=UP;
+	
+	for(int i=1;i<5;i++) {
+		if(BOX_GetKey(i))
+			keyCount++;
 	}
-	if(BOX_GetKey(BOX_DOWN)  /*!BOX_CollisionCheck(receiver,0,4)*/) {
-		if(!BOX_CollisionCheck(receiver,0,4))
-			SELF->y+=2;
-		isMoving=DOWN;
-	}
-	if(BOX_GetKey(BOX_LEFT) /*!BOX_CollisionCheck(receiver,-4,0)*/) {
-		if(!BOX_CollisionCheck(receiver,-4,0))
-			SELF->x-=2;
-		isMoving=LEFT;
-	}
-	if(BOX_GetKey(BOX_RIGHT) /*!BOX_CollisionCheck(receiver,4,0)*/) {
-		if(!BOX_CollisionCheck(receiver,4,0))
-			SELF->x+=2;
-		isMoving=RIGHT;
+	
+	if(BOX_FrameCount()%5!=0) {
+		isMoving=0;
+		if(BOX_GetKey(BOX_UP)) {
+			if(!BOX_CollisionCheck(receiver,0,-4))
+				SELF->y-=movSpd;
+			isMoving=UP;
+		}
+		if(BOX_GetKey(BOX_DOWN)) {
+			if(!BOX_CollisionCheck(receiver,0,4))
+				SELF->y+=movSpd;
+				if(isMoving==UP)
+					isMoving=0;
+				else
+					isMoving=DOWN;
+		}
+		if(BOX_GetKey(BOX_LEFT)) {
+			if(!BOX_CollisionCheck(receiver,-4,0))
+				SELF->x-=movSpd;
+			isMoving=LEFT;
+		}
+		if(BOX_GetKey(BOX_RIGHT)) {
+			if(!BOX_CollisionCheck(receiver,4,0))
+				SELF->x+=movSpd;
+				if(isMoving==LEFT)
+					isMoving=0;
+				else
+					isMoving=RIGHT;
+		}
 	}
 	if(isMoving)
 		lastDirection=isMoving;
-		
-	if(isMoving) {/*
-		switch(animationTimer%4) {
-			case 0:
-				frame+=10;
-			break;
-			case 2:
-				frame+=20;
-			break;
-		}*/
+	BOX_GetEntity(BOX_Camera())->postbox(BOX_UPDATE_CAMERA,receiver,BOX_GetEntity(BOX_Camera()),MSG_CAMERAUPDATE(SELF->x,SELF->y));
+	if(isMoving) {
 		if(animationTimer%2==0)
 			frame+=10;
 		else
@@ -59,9 +67,6 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 	} else { 
 		BOX_DrawTop(SELF->x-2,SELF->y,frame+lastDirection-1);
 	}
-	
-	if(SELF->x>CHUNKSIZE*TILESIZE*10+TILESIZE*CHUNKSIZE-1)
-			SELF->x-=CHUNKSIZE*TILESIZE*5;
 	
 	
 	if(state.frame%15==0)
@@ -83,6 +88,7 @@ static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity*
 			setup(signal,sender,receiver,state);
 		break;
 		default:
+		BOX_wprintf("Unknown event received: %d",signal);
 		break;
 	}		
 }

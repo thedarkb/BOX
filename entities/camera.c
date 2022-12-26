@@ -4,7 +4,7 @@
 
 static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	BOX_Entity* target;
-	if(signal!=BOX_SIGNAL_FRAME)
+	if(signal!=BOX_UPDATE_CAMERA)
 		return;
 	if(target=BOX_GetEntity(receiver->hp)) {
 		receiver->x=target->x;

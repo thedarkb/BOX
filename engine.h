@@ -33,11 +33,11 @@
 #define NEW(x) 			malloc(sizeof(x))
 #define ARRAY_LEN(x) (sizeof (x) / sizeof (x[0]))
 
-#define BOX_eprintf(...) 	{fprintf(stderr, "Error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); }
-#define BOX_panic(...) 		{fprintf(stderr, "Fatal error on frame %d in %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__); exit(1);}
+#define BOX_eprintf(...) 	{fprintf(stderr, "Error on frame %d in %s on line %d: ",BOX_FrameCount(),__FILE__,__LINE__); fprintf(stderr, __VA_ARGS__); }
+#define BOX_panic(...) 		{fprintf(stderr, "Fatal error on frame %d in %s on line %d: ",BOX_FrameCount(),__FILE__,__LINE__); fprintf(stderr, __VA_ARGS__); exit(1);}
 
 #ifndef DISABLEWARNINGS
-#define BOX_wprintf(...) 	{fprintf(stderr, "Warning on frame %d from %s: ",BOX_FrameCount(),__FILE__); fprintf(stderr, __VA_ARGS__);}
+#define BOX_wprintf(...) 	{fprintf(stderr, "Warning on frame %d from %s on line %d: ",BOX_FrameCount(),__FILE__,__LINE__); fprintf(stderr, __VA_ARGS__);}
 #else
 #define BOX_wprintf(...)
 #endif
@@ -48,6 +48,7 @@ typedef enum {
 	BOX_SIGNAL_COLLISION,
 	BOX_SIGNAL_DEATH,
 	BOX_SIGNAL_DIALOGUE,
+	BOX_UPDATE_CAMERA,
 	BOX_SIGNAL_BOUNDS//Used to demarcate the length of the signal handler array.
 } BOX_Signal;
 
@@ -76,16 +77,22 @@ typedef struct _BOX_Entity {
 	const char* tooltip;//Pops up in the editor when you're browsing entity spawns.
 } BOX_Entity;
 
+typedef struct _cameraPoint {
+	int x,y;
+} BOX_CameraPoint;
+
 typedef struct _BOX_Message {
 	BOX_Signal type; 
 	union{
 		int frame,collider,killer;
+		BOX_CameraPoint camera;
 	};
 } BOX_Message;
 
 #define MSG_FRAME(x) (BOX_Message){.type=BOX_SIGNAL_FRAME,.frame=x}
 #define MSG_COLLIDER(x) (BOX_Message){.type=BOX_SIGNAL_COLLISION,.collider=x}
 #define MSG_EMPTY (BOX_Message){.type=-1,.collider=-1}
+#define MSG_CAMERAUPDATE(x,y) (BOX_Message){.type=BOX_UPDATE_CAMERA,.camera=(BOX_CameraPoint){x,y}}
 
 typedef struct _BOX_SignalHandler {
 	int key;
@@ -108,10 +115,7 @@ typedef struct _BOX_Chunk {
 	BOX_ChunkEntity entities[CHUNK_ELIMIT];
 } BOX_Chunk;
 
-typedef struct _cameraPoint {
-	int x,y;
-} BOX_CameraPoint;
-
+BOX_entId BOX_Camera();
 BOX_CameraPoint BOX_CameraGet();
 uint16_t BOX_Rand();
 void BOX_SetSeed(uint32_t in);

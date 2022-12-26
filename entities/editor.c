@@ -567,7 +567,7 @@ BOX_Entity* ent_editor() {
 	BOX_Entity* me=NEW(BOX_Entity);
 	memset(me,sizeof (BOX_Entity),0);
 	me->postbox=signalSwitchboard;
-	me->tag=NULL;
+	//me->tag=NULL;
 	
 	SDL_RenderSetScale(r,2,2);
 	SDL_SetWindowSize(w, 480, 320);
