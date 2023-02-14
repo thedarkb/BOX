@@ -42,6 +42,12 @@
 #define BOX_wprintf(...)
 #endif
 
+#ifdef EDITOR
+#define BOX_debugmsg(...) 	{fprintf(stderr, "Message on frame %d from %s on line %d: ",BOX_FrameCount(),__FILE__,__LINE__); fprintf(stderr, __VA_ARGS__);}
+#else
+#define BOX_debugmsg(...)
+#endif
+
 typedef enum {
 	BOX_SIGNAL_SPAWN,
 	BOX_SIGNAL_FRAME,

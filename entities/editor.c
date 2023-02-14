@@ -7,8 +7,10 @@
 #include "../engine.h"
 #include "entities.h"
 
+//Simon Tatham's coroutine macros.
 #define ASYNC_BEGIN static int scrLine = 0; switch(scrLine) { case 0:
 #define ASYNC_END scrLine=0;} return
+#define ASYNC_END_NORETURN scrLine=0;}
 #define YIELD do {scrLine=__LINE__;return; case __LINE__:;} while (0)
 
 #define SELF BOX_GetEntity(receiver->id)
@@ -39,6 +41,7 @@ GObject* toolWin;
 extern SDL_Renderer* r;
 extern SDL_Window* w;
 extern BOX_Chunk* chunkCache[3][3];
+extern const uint8_t* k;
 SDL_Texture* nsheet;
 
 SDL_Window* edWin;
@@ -46,12 +49,15 @@ SDL_Renderer* edRend;
 BOX_Chunk* target=NULL;
 BOX_Chunk localMap;
 
-int tileSelection=1;
-int toolSelection=0;
-int layerSelection=0;
-int selectedTileX=-1;
-int selectedTileY=-1;
-int animated=0;
+static int drawLayer=0;
+static int tileSelection=1;
+static int toolSelection=0;
+static int layerSelection=0;
+static int selectedTileX=-1;
+static int selectedTileY=-1;
+static int animated=0;
+static SDL_Texture* layers[3];
+static char repaintWindow=1;
 
 extern void chunkRefresh(void);
 
@@ -74,10 +80,27 @@ static void fill(uint8_t in[CHUNKSIZE][CHUNKSIZE], int id, int field, int x, int
 	fill(in,id,field,x,y+1);
 }
 
-static void draw(int id, int x, int y) {
+static void draw(int id, int x, int y, int layer) {
 	SDL_Rect source={(id % (SPRITESHEET/TILESIZE))*TILESIZE, (id / (SPRITESHEET/TILESIZE))*TILESIZE,TILESIZE,TILESIZE};
-	SDL_Rect dest={x,y,TILESIZE,TILESIZE};
-	SDL_RenderCopy(edRend,nsheet,&source,&dest);
+	SDL_Rect dest={x*TILESIZE,y*TILESIZE,TILESIZE,TILESIZE};
+	
+	static char diffs[CHUNKSIZE][CHUNKSIZE][3];
+	
+	if(layer!=0) {
+		SDL_RenderCopy(edRend,nsheet,&source,&dest);
+		return;
+	} else if(diffs[y][x][layer]!=id || repaintWindow) {
+		if(!id) {
+			diffs[y][x][layer]=id;
+			return;
+		}
+		BOX_debugmsg("Tile changed, layer=%d,repaintWindow=%d,%s\n",layer,repaintWindow,SDL_GetError());
+		SDL_SetRenderTarget(edRend,layers[layer]);
+		SDL_RenderCopy(edRend,nsheet,&source,&dest);
+		SDL_SetRenderTarget(edRend,NULL);
+		diffs[y][x][layer]=id;
+	}
+
 }
 
 static int spawnerShim(BOX_Entity* in, int x, int y, int sX, int sY) {
@@ -88,7 +111,7 @@ static int spawnerShim(BOX_Entity* in, int x, int y, int sX, int sY) {
 		printf("Null passed to spawner!\n");
 		return -1;
 	}
-	draw(in->thumbnail,x,y);
+	//draw(in->thumbnail,x/TILESIZE,y/TILESIZE);
 	return id++;
 }
 
@@ -258,6 +281,21 @@ G_MODULE_EXPORT void screenChange(GtkButton* button, gpointer data) {
 		BOX_GetEntity(1)->y=diffSy*CHUNKSIZE*TILESIZE+CHUNKSIZE/2*TILESIZE;
 	}
 }
+G_MODULE_EXPORT void intExtSwap(GtkButton* button, gpointer data) {
+	int offset=TILESIZE*CHUNKSIZE*1024;
+	if(BOX_GetEntity(1)->x>offset)
+		BOX_GetEntity(1)->x-=offset;
+	else
+		BOX_GetEntity(1)->x+=offset;
+}
+
+G_MODULE_EXPORT void overUnderSwap(GtkButton* button, gpointer data) {
+	int offset=TILESIZE*CHUNKSIZE*1024;
+	if(BOX_GetEntity(1)->y>offset)
+		BOX_GetEntity(1)->y-=offset;
+	else
+		BOX_GetEntity(1)->y+=offset;
+}
 
 G_MODULE_EXPORT void chunkDumper(GtkButton* button, gpointer data) {
 	int new_len=0;
@@ -355,10 +393,89 @@ static void cloneVerifyLocalmap() {
 	localMap=*chunkCache[1][1];
 	
 	for(int j=0;j<CHUNK_ELIMIT;j++) {
-		char* newString=malloc(strlen(localMap.entities[j].args)+1);
+		char* newString;
+		if(!localMap.entities[j].args) {
+			newString=NULL;
+			continue;
+		}
+		newString=malloc(strlen(localMap.entities[j].args)+1);
 		strcpy(newString,localMap.entities[j].args);
 		localMap.entities[j].args=(const char*)newString;
 	}
+}
+
+static void drawWindow() {
+	static int x;
+	static int y;
+	/*------------------------------------*/
+
+	/*Draw tile pallet.*/
+	draw(103,CHUNKSIZE,CHUNKSIZE+2,-1);
+	for(int i=0;i<CHUNKSIZE;i++) {
+		draw(tileSelection-CHUNKSIZE/2+i,CHUNKSIZE+1,i,-1);
+	}
+	/*----------------*/
+ASYNC_BEGIN;
+	/*Draw each of the map layers in turn, depending on selection.*/
+	for(y=0;y<CHUNKSIZE;y++) {
+		for(x=0;x<CHUNKSIZE;x++) {
+			if(localMap.bottom[y][x]&ANIMFLAG)
+				draw((localMap.bottom[y][x]+tileAnimClock)&TILEMASK,x,y,0);
+			else
+				draw(localMap.bottom[y][x]&TILEMASK,x,y,0);
+		}
+	}
+	SDL_RenderCopy(edRend,layers[0],NULL,&(SDL_Rect){0,0,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE});
+YIELD;
+	if(layerSelection==1) {
+		for(y=0;y<CHUNKSIZE;y++) {
+			for(x=0;x<CHUNKSIZE;x++) {
+				if(localMap.clipping[y][x/8]&BIT(x%8));
+					rect(x*TILESIZE,y*TILESIZE,TILESIZE,TILESIZE,0,0,0,200);
+			}
+		}
+	} 
+	if(layerSelection!=4 && layerSelection!=0 && layerSelection!=1) {
+		rect(0,0,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE,0,0,0,200);
+	}
+YIELD;
+	if(layerSelection==2 || layerSelection==4) {
+		for(y=0;y<CHUNKSIZE;y++) {
+			for(x=0;x<CHUNKSIZE;x++) {
+				if(localMap.top[y][x]&ANIMFLAG)
+					draw((localMap.top[y][x]+tileAnimClock)&TILEMASK,x,y,1);
+				else
+					draw(localMap.top[y][x]&TILEMASK,x,y,1);
+			}
+		}
+	}
+	
+YIELD;
+	if((layerSelection==4 || layerSelection==3) /*&& localMap.initialiser*/) {
+		for(int i=0;i<CHUNK_ELIMIT;i++) {
+			if(localMap.entities[i].entitySpawner>-1) {
+				BOX_Entity* temp=editor_entities[localMap.entities[i].entitySpawner](localMap.entities[i].x,localMap.entities[i].y,localMap.entities[i].args,&localMap);
+				draw(temp->thumbnail,localMap.entities[i].x,localMap.entities[i].y,2);
+				free(temp);
+			}
+		}
+	}
+	/*----------------------------------------------------------*/
+	
+	if(toolSelection==2) { //Draw a square on selected tile when select selected.
+		rect(selectedTileX*TILESIZE,selectedTileY*TILESIZE,TILESIZE,TILESIZE,150,150,255,200);
+	}
+	
+	
+	*target=localMap;
+	cloneVerifyLocalmap();
+
+YIELD;
+	SDL_RenderPresent(edRend);
+	SDL_RenderClear(edRend);
+	printf(SDL_GetError());
+	repaintWindow=0;
+	ASYNC_END;
 }
 
 static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
@@ -366,12 +483,8 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 	static int debounce;
 	char messages[255];
 	
-	for(int i=0;i<4;i++)
+	for(int i=0;i<2;i++)
 		gtk_main_iteration_do(FALSE);
-	
-	//printf("%d\n",localMap.flags);
-			
-	ASYNC_BEGIN;
 
 	SELF->x=BOX_CameraGet().x;
 	SELF->y=BOX_CameraGet().y;
@@ -400,8 +513,14 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 	} else {
 		gtk_widget_set_sensitive(GTK_WIDGET(gtk_builder_get_object(builder,"chunkDelete")),FALSE);
 	}
-	sprintf(messages,"%d",localMap.id);
-	gtk_label_set_text(GTK_LABEL(gtk_builder_get_object(builder,"chunkNum")),(const char*)&messages[0]);
+	{
+		static int oldid;
+		if(oldid!=localMap.id) {
+			sprintf(messages,"%d",localMap.id);
+			gtk_entry_set_text(GTK_ENTRY(gtk_builder_get_object(builder,"chunkNum")),(const char*)&messages[0]);
+			oldid=localMap.id;
+		}
+	}
 	/*-----------------------------------------------------------*/
 	
 	/*Handle clicks in the editing window.*/
@@ -460,68 +579,9 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 		}
 		debounce=BOX_FrameCount();
 	}
-	/*------------------------------------*/
-
-	/*Draw tile pallet.*/
-	draw(103,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE/2);
-	for(int i=0;i<CHUNKSIZE;i++) {
-		draw(tileSelection-CHUNKSIZE/2+i,CHUNKSIZE*TILESIZE+TILESIZE,i*TILESIZE);
-	}
-	/*----------------*/
-	
-	/*Draw each of the map layers in turn, depending on selection.*/
-	for(int y=0;y<CHUNKSIZE;y++) {
-		for(int x=0;x<CHUNKSIZE;x++) {
-			if(localMap.bottom[y][x]&ANIMFLAG)
-				draw((localMap.bottom[y][x]+tileAnimClock)&TILEMASK,x*TILESIZE,y*TILESIZE);
-			else
-				draw(localMap.bottom[y][x]&TILEMASK,x*TILESIZE,y*TILESIZE);
-		}
-	}
-	if(layerSelection==1) {
-		for(int y=0;y<CHUNKSIZE;y++) {
-			for(int x=0;x<CHUNKSIZE;x++) {
-				if(localMap.clipping[y][x/8]&BIT(x%8))
-					rect(x*TILESIZE,y*TILESIZE,TILESIZE,TILESIZE,0,0,0,200);
-			}
-		}
-	}
-	else if(layerSelection!=4 && layerSelection!=0) {
-		rect(0,0,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE,0,0,0,200);
-	}
-	YIELD;
-	if(layerSelection==4 || layerSelection==2) {
-		for(int y=0;y<CHUNKSIZE;y++) {
-			for(int x=0;x<CHUNKSIZE;x++) {
-				if(localMap.top[y][x]&ANIMFLAG)
-					draw((localMap.top[y][x]+tileAnimClock)&TILEMASK,x*TILESIZE,y*TILESIZE);
-				else
-					draw(localMap.top[y][x]&TILEMASK,x*TILESIZE,y*TILESIZE);
-			}
-		}
-	}
-	if((layerSelection==4 || layerSelection==3) /*&& localMap.initialiser*/) {
-		for(int i=0;i<CHUNK_ELIMIT;i++) {
-			if(localMap.entities[i].entitySpawner>-1) {
-				BOX_Entity* temp=editor_entities[localMap.entities[i].entitySpawner](localMap.entities[i].x,localMap.entities[i].y,localMap.entities[i].args,&localMap);
-				draw(temp->thumbnail,localMap.entities[i].x*TILESIZE,localMap.entities[i].y*TILESIZE);
-				free(temp);
-			}
-		}
-	}
-	/*----------------------------------------------------------*/
-	
-	if(toolSelection==2) { //Draw a square on selected tile when select selected.
-		rect(selectedTileX*TILESIZE,selectedTileY*TILESIZE,TILESIZE,TILESIZE,150,150,255,200);
-	}
-	
-	
-	*target=localMap;
-	cloneVerifyLocalmap();
-	
-	SDL_RenderPresent(edRend);
-	SDL_RenderClear(edRend);
-	ASYNC_END;
+	if(k[SDL_SCANCODE_U])
+		repaintWindow=1;
+	drawWindow();
 }
 
 static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
@@ -563,6 +623,8 @@ static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity*
 
 BOX_Entity* ent_editor() {
 	static int ident;
+	uint32_t texFormat;
+	 
 	if(ident) BOX_panic("Attempt to spawn two map editors in one session.\n");
 	BOX_Entity* me=NEW(BOX_Entity);
 	memset(me,sizeof (BOX_Entity),0);
@@ -578,6 +640,10 @@ BOX_Entity* ent_editor() {
 	nsheet=SDL_CreateTextureFromSurface(edRend, loader);
 	SDL_RenderSetScale(edRend,SCALEFACTOR,SCALEFACTOR);
 	SDL_SetRenderDrawBlendMode(edRend,SDL_BLENDMODE_BLEND);
+	SDL_QueryTexture(nsheet,&texFormat,NULL,NULL,NULL);
+	
+	for(int i=0;i<3;i++)
+		layers[i]=SDL_CreateTexture(edRend,texFormat,SDL_TEXTUREACCESS_TARGET,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE);
 	
 	ident=1;
 	return me;

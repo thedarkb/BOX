@@ -32,6 +32,8 @@ typedef struct _BOX_EventQueueNode {
 #define CAMERAX (BOX_CameraGet().x-RESX/2+TILESIZE/2)
 #define CAMERAY (BOX_CameraGet().y-RESY/2+TILESIZE/2)
 
+#define CHUNKPX CHUNKSIZE*TILESIZE
+
 SDL_Window* w;
 SDL_Surface* s;
 SDL_Renderer* r;
@@ -43,6 +45,7 @@ BOX_SignalHandler* signalHandlers=NULL;
 BOX_EventQueueNode* messageBuffer=NULL;
 BOX_Entity* entSet[ELIMIT]={NULL};
 BOX_Chunk* chunkCache[3][3]={NULL};
+SDL_Texture* bgLayers[3][3];
 
 unsigned int seed=42;
 unsigned int rngstate;
@@ -54,6 +57,7 @@ BOX_entId camera=0;
 
 int sX=0x1;
 int sY=0x1;
+char globalRegen=0;
 
 int entityTally=0;
 int hashAttemptTally=0;
@@ -327,6 +331,25 @@ int BOX_ChunkEntitySpawn(BOX_Entity* in, int x, int y, int sX, int sY) {
 	return BOX_EntitySpawn(in,x+(sX*CHUNKSIZE*TILESIZE),y+(sY*CHUNKSIZE*TILESIZE));
 }
 
+void BOX_DrawBackground(int sx, int sy, int tx, int ty, int id) {
+	static unsigned char diffs[3][3][CHUNKSIZE][CHUNKSIZE];
+	if(tx>CHUNKSIZE || ty>CHUNKSIZE) {
+		BOX_wprintf("Tile drawn out of bounds at cache position %d,%d.\n");
+		return;
+	}
+	if(!id)
+		return;
+	if(diffs[sy%3][sx%3][ty][tx]!=id) {
+		SDL_Rect source={(id % (SPRITESHEET/TILESIZE))*TILESIZE, (id / (SPRITESHEET/TILESIZE))*TILESIZE,TILESIZE,TILESIZE};
+		SDL_Rect dest={tx*TILESIZE,ty*TILESIZE,TILESIZE,TILESIZE};
+		
+		SDL_SetRenderTarget(r,bgLayers[sy%3][sx%3]);
+		SDL_RenderCopy(r,sheet,&source,&dest);
+		SDL_SetRenderTarget(r,NULL);
+		diffs[sy%3][sx%3][ty][tx]=id;
+	}
+}
+
 void BOX_DrawBottom(int x, int y, int id) {
 	if(!id) return;
 	if(BOX_Diff(CAMERAX,x)>RESX) return;
@@ -383,6 +406,16 @@ void BOX_RenderList() {
 
 void chunkRefresh() {
 	int regen=0;
+	
+	if(globalRegen) {
+		for(int x=0;x<3;x++) {
+			for(int y=0;y<3;y++) {
+				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+			}
+		}
+		globalRegen=0;
+		return;
+	}
 	
 	if(BOX_Diff(sX,CAMERASX)>0 && BOX_Diff(sX,CAMERASX)<2) {//Finds which chunks need regenerating.
 		if(sX<CAMERASX) {
@@ -461,10 +494,8 @@ loop() {
 
 	int delay=1000/FRAMERATE-(SDL_GetTicks()-lastTick);
 	if(delay>0 && lastTick) SDL_Delay(delay);
-	#ifndef EDITOR
-	//else if(lastTick)
-	//	BOX_wprintf("Game loop too slow by %d ticks!\n",SDL_GetTicks()-lastTick-1000/FRAMERATE);
-	#endif
+	else if(lastTick && SDL_GetTicks()-lastTick-1000/FRAMERATE)
+		BOX_wprintf("Game loop too slow by %d ticks!\n",SDL_GetTicks()-lastTick-1000/FRAMERATE);
 	lastTick=SDL_GetTicks();
 	
 	BOX_ResolveEntityCollisions();
@@ -495,8 +526,10 @@ loop() {
 	int cameraXf=BOX_CameraGet().x;
 	for(int y=(cameraYf-(RESY/2))/TILESIZE-TILESIZE/2;y<TILESIZE+(cameraYf-RESY/2)/TILESIZE;y++) {
 		for(int x=(cameraXf-(RESX/2))/TILESIZE-TILESIZE/2;x<TILESIZE+TILESIZE/2+(cameraXf-RESX/2)/TILESIZE;x++) {
-			int botTile=chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->bottom[y%CHUNKSIZE][x%CHUNKSIZE];
-			int topTile=chunkCache[x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1][y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1]->top[y%CHUNKSIZE][x%CHUNKSIZE];
+			int dsx=x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1;
+			int dsy=y/CHUNKSIZE-cameraYf/CHUNKSIZE/TILESIZE+1;
+			int botTile=chunkCache[dsx][dsy]->bottom[y%CHUNKSIZE][x%CHUNKSIZE];
+			int topTile=chunkCache[dsx][dsy]->top[y%CHUNKSIZE][x%CHUNKSIZE];
 			
 			if(botTile&ANIMFLAG)
 				botTile+=tileAnimClock;
@@ -504,6 +537,7 @@ loop() {
 				topTile+=tileAnimClock;
 			
 			BOX_DrawBottom(x*TILESIZE,y*TILESIZE,botTile&TILEMASK);
+			BOX_DrawBackground(dsx,dsy,x%CHUNKSIZE,y%CHUNKSIZE,botTile&TILEMASK);
 			BOX_DrawTop(x*TILESIZE,y*TILESIZE,topTile&TILEMASK);
 		}
 	}
@@ -512,8 +546,26 @@ loop() {
 	
 	if(k[SDL_SCANCODE_C])
 		BOX_CollisionCheck(BOX_GetEntity(1),0,0);
+	/*
+	for(int y=0;y<3;y++) {
+		for(int x=0;x<3;x++) {//BGLOOP
+			int cameraYf=BOX_CameraGet().y;
+			int cameraXf=BOX_CameraGet().x;
+			SDL_Rect dest={
+				(-(CHUNKSIZE*TILESIZE)+x*CHUNKSIZE*TILESIZE-(cameraXf-RESX/2))%CHUNKSIZE,
+				(-(CHUNKSIZE*TILESIZE)+y*CHUNKSIZE*TILESIZE-(cameraYf-RESY/2))%CHUNKSIZE,
+				CHUNKSIZE*TILESIZE,
+				CHUNKSIZE*TILESIZE
+			};
+			
+			SDL_RenderCopy(r,bgLayer[(sY-1+y)%3][(sX-1+x)%3],NULL,&dest);
+		}
+	}
+	*/
+	
+	//SDL_RenderCopy(r,bgLayers[sY%3][sX%3],NULL,&(SDL_Rect){0-(BOX_CameraGet().x%(TILESIZE*CHUNKSIZE))+RESX/2-TILESIZE/2,0,CHUNKPX,CHUNKPX});
 
-
+	
 	BOX_RenderList();
 	SDL_RenderPresent(r);
 	if(k[SDL_SCANCODE_SPACE])
@@ -538,6 +590,8 @@ loop() {
 }
 
 int main() {
+	uint32_t texFormat;
+	
 	rngstate=seed;
 	SDL_Init(SDL_INIT_VIDEO);
 	w=SDL_CreateWindow(TITLE,0,0,RESX*SCALE,RESY*SCALE,SDL_WINDOW_OPENGL);
@@ -550,6 +604,10 @@ int main() {
 	SDL_FreeSurface(loader);
 
 	SDL_RenderSetScale(r,SCALE,SCALE);
+	SDL_QueryTexture(sheet,&texFormat,NULL,NULL,NULL);
+	for(int y=0;y<3;y++)
+		for(int x=0;x<3;x++)
+			bgLayers[y][x]=SDL_CreateTexture(r,texFormat,SDL_TEXTUREACCESS_TARGET,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE);
 	
 	#ifdef __EMSCRIPTEN__
 	emscripten_set_main_loop(loop,0,1);

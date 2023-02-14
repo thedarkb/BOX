@@ -7,11 +7,6 @@ BOX_Entity* ent_camera(int);
 BOX_Entity* ent_editor();
 
 #ifdef EDENTS
-static void instantDeath(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
-	if(signal!=BOX_SIGNAL_SPAWN)
-			BOX_RemoveEntity(receiver->id);
-}
-
 BOX_Entity* (*editor_entities[])(int,int,const char*,BOX_Chunk*)={
 	NULL,
 	ent_furniture,
