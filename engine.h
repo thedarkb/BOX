@@ -142,5 +142,7 @@ int BOX_EntitySpawn(BOX_Entity* in,int x,int y);
 int BOX_ChunkEntitySpawn(BOX_Entity* in, int x, int y, int sX, int sY);
 void BOX_DrawBottom(int x, int y, int id);
 void BOX_DrawTop(int x, int y, int id);
+void BOX_RenderBGPage(BOX_Chunk* in);
+void BOX_DrawBG();
 void BOX_RenderList();
 #endif

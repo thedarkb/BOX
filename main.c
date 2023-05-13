@@ -12,6 +12,11 @@
 #include "entities/entities.h"
 #include "world/world.h"
 
+typedef struct _BOX_BGlayers {
+	int id;
+	SDL_Texture* page;	
+} BOX_BGlayers;
+
 typedef struct _BOX_SpriteNode {
 	int x,y,id,width,height;
 	SDL_Texture* sheet;
@@ -45,7 +50,7 @@ BOX_SignalHandler* signalHandlers=NULL;
 BOX_EventQueueNode* messageBuffer=NULL;
 BOX_Entity* entSet[ELIMIT]={NULL};
 BOX_Chunk* chunkCache[3][3]={NULL};
-SDL_Texture* bgLayers[3][3];
+BOX_BGlayers bgPages[3][3];
 
 unsigned int seed=42;
 unsigned int rngstate;
@@ -171,7 +176,6 @@ char BOX_CollisionCheck(BOX_Entity* in,int x, int y) { //Collision detection bet
 				subY+=CHUNKSIZE*TILESIZE;
 			}
 			if(subY>CHUNKSIZE*TILESIZE) {
-				//BOX_panic("Actually works.\n");
 				soffY=2;
 				subY-=CHUNKSIZE*TILESIZE;
 			}
@@ -331,25 +335,6 @@ int BOX_ChunkEntitySpawn(BOX_Entity* in, int x, int y, int sX, int sY) {
 	return BOX_EntitySpawn(in,x+(sX*CHUNKSIZE*TILESIZE),y+(sY*CHUNKSIZE*TILESIZE));
 }
 
-void BOX_DrawBackground(int sx, int sy, int tx, int ty, int id) {
-	static unsigned char diffs[3][3][CHUNKSIZE][CHUNKSIZE];
-	if(tx>CHUNKSIZE || ty>CHUNKSIZE) {
-		BOX_wprintf("Tile drawn out of bounds at cache position %d,%d.\n");
-		return;
-	}
-	if(!id)
-		return;
-	if(diffs[sy%3][sx%3][ty][tx]!=id) {
-		SDL_Rect source={(id % (SPRITESHEET/TILESIZE))*TILESIZE, (id / (SPRITESHEET/TILESIZE))*TILESIZE,TILESIZE,TILESIZE};
-		SDL_Rect dest={tx*TILESIZE,ty*TILESIZE,TILESIZE,TILESIZE};
-		
-		SDL_SetRenderTarget(r,bgLayers[sy%3][sx%3]);
-		SDL_RenderCopy(r,sheet,&source,&dest);
-		SDL_SetRenderTarget(r,NULL);
-		diffs[sy%3][sx%3][ty][tx]=id;
-	}
-}
-
 void BOX_DrawBottom(int x, int y, int id) {
 	if(!id) return;
 	if(BOX_Diff(CAMERAX,x)>RESX) return;
@@ -382,6 +367,61 @@ void BOX_DrawTop(int x, int y, int id) {
 	spriteListEnd=new;
 }
 
+void BOX_RenderBGPage(BOX_Chunk* in) {
+	int x=in->id%65535;
+	int y=in->id/65535;
+	int cacheX=x%3;
+	int cacheY=y%3;
+	SDL_SetRenderTarget(r,bgPages[cacheX][cacheY].page);
+	for(int y=0;y<CHUNKSIZE;y++) {
+		for(int x=0;x<CHUNKSIZE;x++) {
+			SDL_Rect source={(in->bottom[y][x] % (SPRITESHEET/TILESIZE))*TILESIZE, (in->bottom[y][x] / (SPRITESHEET/TILESIZE))*TILESIZE,TILESIZE,TILESIZE};
+			SDL_Rect dest={x*TILESIZE,y*TILESIZE,TILESIZE,TILESIZE};
+			SDL_RenderCopy(r,sheet,&source,&dest);
+		}
+	}
+	SDL_SetRenderTarget(r,NULL);
+	bgPages[cacheX][cacheY].id=in->id;
+}
+
+
+void BOX_DrawBG() {
+	int cX=CAMERAX;
+	int cY=CAMERAY;
+	for(int i=0;i<3;i++) {
+		for(int j=0;j<3;j++) {
+			int x=bgPages[i][j].id%65535;
+			int y=bgPages[i][j].id/65535;
+			int edge=CHUNKSIZE*TILESIZE;
+			x*=CHUNKSIZE*TILESIZE;
+			y*=CHUNKSIZE*TILESIZE;
+			
+			SDL_Rect dest={x-cX,y-cY,edge,edge};
+			SDL_RenderCopy(r,bgPages[i][j].page,NULL,&dest);
+		}
+	}
+}
+
+
+/*
+void BOX_DrawBG() {
+	int cX=CAMERAX;
+	int cY=CAMERAY;
+	for(int i=0;i<3;i++) {
+		for(int j=0;j<3;j++) {
+			int x=chunkCache[1][1]->id%65535;
+			int y=chunkCache[1][1]->id/65535;
+			int edge=CHUNKSIZE*TILESIZE;
+			x*=CHUNKSIZE*TILESIZE;
+			y*=CHUNKSIZE*TILESIZE;
+			
+			SDL_Rect dest={x-cX,y-cY,edge,edge};
+			SDL_RenderCopy(r,bgPages[i][j].page,NULL,&dest);
+		}
+	}
+}
+*/
+
 void BOX_RenderList() {
 	int cX=CAMERAX;
 	int cY=CAMERAY;
@@ -411,6 +451,7 @@ void chunkRefresh() {
 		for(int x=0;x<3;x++) {
 			for(int y=0;y<3;y++) {
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+				BOX_RenderBGPage(chunkCache[x][y]);
 			}
 		}
 		globalRegen=0;
@@ -427,6 +468,7 @@ void chunkRefresh() {
 			}
 			for(int y=-1;y<2;y++) {
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[2][y+1],CAMERASX+1,CAMERASY+y),0,0);
+				BOX_RenderBGPage(chunkCache[2][y+1]);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -439,6 +481,7 @@ void chunkRefresh() {
 			}
 			for(int y=-1;y<2;y++) {
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[0][y+1],CAMERASX-1,CAMERASY+y),0,0);
+				BOX_RenderBGPage(chunkCache[0][y+1]);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -453,6 +496,7 @@ void chunkRefresh() {
 			}
 			for(int x=-1;x<2;x++) {
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][2],CAMERASX+x,CAMERASY+1),0,0);
+				BOX_RenderBGPage(chunkCache[x+1][2]);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -465,6 +509,7 @@ void chunkRefresh() {
 			}
 			for(int x=-1;x<2;x++) {
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][0],CAMERASX+x,CAMERASY-1),0,0);
+				BOX_RenderBGPage(chunkCache[x+1][0]);
 			}
 			sX=CAMERASX;
 			sY=CAMERASY;
@@ -473,9 +518,12 @@ void chunkRefresh() {
 		regen=1;
 		sX=CAMERASX;
 		sY=CAMERASY;
-		for(int x=0;x<3;x++)
-			for(int y=0;y<3;y++)
+		for(int x=0;x<3;x++) {
+			for(int y=0;y<3;y++) {
 				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+				BOX_RenderBGPage(chunkCache[x][y]);
+			}
+		}
 	}
 }
 
@@ -494,7 +542,7 @@ loop() {
 
 	int delay=1000/FRAMERATE-(SDL_GetTicks()-lastTick);
 	if(delay>0 && lastTick) SDL_Delay(delay);
-	else if(lastTick && SDL_GetTicks()-lastTick-1000/FRAMERATE)
+	else if(lastTick && SDL_GetTicks()-lastTick-1000/FRAMERATE > 2)
 		BOX_wprintf("Game loop too slow by %d ticks!\n",SDL_GetTicks()-lastTick-1000/FRAMERATE);
 	lastTick=SDL_GetTicks();
 	
@@ -524,6 +572,7 @@ loop() {
 	
 	int cameraYf=BOX_CameraGet().y;
 	int cameraXf=BOX_CameraGet().x;
+	BOX_DrawBG();
 	for(int y=(cameraYf-(RESY/2))/TILESIZE-TILESIZE/2;y<TILESIZE+(cameraYf-RESY/2)/TILESIZE;y++) {
 		for(int x=(cameraXf-(RESX/2))/TILESIZE-TILESIZE/2;x<TILESIZE+TILESIZE/2+(cameraXf-RESX/2)/TILESIZE;x++) {
 			int dsx=x/CHUNKSIZE-cameraXf/CHUNKSIZE/TILESIZE+1;
@@ -536,8 +585,7 @@ loop() {
 			if(topTile&ANIMFLAG)
 				topTile+=tileAnimClock;
 			
-			BOX_DrawBottom(x*TILESIZE,y*TILESIZE,botTile&TILEMASK);
-			BOX_DrawBackground(dsx,dsy,x%CHUNKSIZE,y%CHUNKSIZE,botTile&TILEMASK);
+			//BOX_DrawBottom(x*TILESIZE,y*TILESIZE,botTile&TILEMASK);
 			BOX_DrawTop(x*TILESIZE,y*TILESIZE,topTile&TILEMASK);
 		}
 	}
@@ -546,24 +594,6 @@ loop() {
 	
 	if(k[SDL_SCANCODE_C])
 		BOX_CollisionCheck(BOX_GetEntity(1),0,0);
-	/*
-	for(int y=0;y<3;y++) {
-		for(int x=0;x<3;x++) {//BGLOOP
-			int cameraYf=BOX_CameraGet().y;
-			int cameraXf=BOX_CameraGet().x;
-			SDL_Rect dest={
-				(-(CHUNKSIZE*TILESIZE)+x*CHUNKSIZE*TILESIZE-(cameraXf-RESX/2))%CHUNKSIZE,
-				(-(CHUNKSIZE*TILESIZE)+y*CHUNKSIZE*TILESIZE-(cameraYf-RESY/2))%CHUNKSIZE,
-				CHUNKSIZE*TILESIZE,
-				CHUNKSIZE*TILESIZE
-			};
-			
-			SDL_RenderCopy(r,bgLayer[(sY-1+y)%3][(sX-1+x)%3],NULL,&dest);
-		}
-	}
-	*/
-	
-	//SDL_RenderCopy(r,bgLayers[sY%3][sX%3],NULL,&(SDL_Rect){0-(BOX_CameraGet().x%(TILESIZE*CHUNKSIZE))+RESX/2-TILESIZE/2,0,CHUNKPX,CHUNKPX});
 
 	
 	BOX_RenderList();
@@ -607,7 +637,7 @@ int main() {
 	SDL_QueryTexture(sheet,&texFormat,NULL,NULL,NULL);
 	for(int y=0;y<3;y++)
 		for(int x=0;x<3;x++)
-			bgLayers[y][x]=SDL_CreateTexture(r,texFormat,SDL_TEXTUREACCESS_TARGET,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE);
+			bgPages[y][x].page=SDL_CreateTexture(r,texFormat,SDL_TEXTUREACCESS_TARGET,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE);
 	
 	#ifdef __EMSCRIPTEN__
 	emscripten_set_main_loop(loop,0,1);

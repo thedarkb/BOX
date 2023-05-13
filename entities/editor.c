@@ -94,7 +94,7 @@ static void draw(int id, int x, int y, int layer) {
 			diffs[y][x][layer]=id;
 			return;
 		}
-		BOX_debugmsg("Tile changed, layer=%d,repaintWindow=%d,%s\n",layer,repaintWindow,SDL_GetError());
+		//BOX_debugmsg("Tile changed, layer=%d,repaintWindow=%d,%s\n",layer,repaintWindow,SDL_GetError());
 		SDL_SetRenderTarget(edRend,layers[layer]);
 		SDL_RenderCopy(edRend,nsheet,&source,&dest);
 		SDL_SetRenderTarget(edRend,NULL);
