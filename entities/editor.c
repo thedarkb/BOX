@@ -401,6 +401,7 @@ static void cloneVerifyLocalmap() {
 		}
 		newString=malloc(strlen(localMap.entities[j].args)+1);
 		strcpy(newString,localMap.entities[j].args);
+
 		localMap.entities[j].args=(const char*)newString;
 	}
 }
