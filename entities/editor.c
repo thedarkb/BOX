@@ -262,7 +262,8 @@ G_MODULE_EXPORT void spawnMapEntities(GtkButton* button, gpointer data) {
 				);
 			}
 		}
-	}	
+	}
+	BOX_RenderBGPage(&localMap);
 }
 
 G_MODULE_EXPORT void screenChange(GtkButton* button, gpointer data) {
@@ -430,7 +431,7 @@ YIELD;
 	if(layerSelection==1) {
 		for(y=0;y<CHUNKSIZE;y++) {
 			for(x=0;x<CHUNKSIZE;x++) {
-				if(localMap.clipping[y][x/8]&BIT(x%8));
+				if(localMap.clipping[y][x/8]&BIT(x%8))
 					rect(x*TILESIZE,y*TILESIZE,TILESIZE,TILESIZE,0,0,0,200);
 			}
 		}
@@ -552,6 +553,7 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 						else
 							localMap.clipping[mY/TILESIZE][mX/TILESIZE/8]&=~BIT(mX/TILESIZE%8);
 					}
+					BOX_RenderBGPage(&localMap);
 				break;
 				case 1://Fill tool.
 					localMap.flags|=BIT(WS_MODIFIED);
@@ -563,6 +565,7 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 						fill(localMap.bottom,tileVal,localMap.bottom[mY/TILESIZE][mX/TILESIZE],mX/TILESIZE,mY/TILESIZE);
 					else if(layerSelection==2)
 						fill(localMap.top,tileVal,localMap.top[mY/TILESIZE][mX/TILESIZE],mX/TILESIZE,mY/TILESIZE);
+					BOX_RenderBGPage(&localMap);
 				break;
 				case 2://Select tool.
 					if(button&SDL_BUTTON(SDL_BUTTON_LEFT)) {

@@ -20,11 +20,15 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 	unsigned char frame=186;//Position of player sprite on spritesheet.
 	unsigned char movSpd=2,keyCount=0;
 	
-	
 	for(int i=1;i<5;i++) {
 		if(BOX_GetKey(i))
 			keyCount++;
 	}
+	
+	#ifdef EDITOR
+	if(k[SDL_SCANCODE_K])
+		movSpd=255;
+	#endif
 	
 	if(BOX_FrameCount()%5!=0) {
 		isMoving=0;

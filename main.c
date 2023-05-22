@@ -9,6 +9,7 @@
 #define EDENTS
 
 #include "engine.h"
+#include "font.h"
 #include "entities/entities.h"
 #include "world/world.h"
 
@@ -39,11 +40,14 @@ typedef struct _BOX_EventQueueNode {
 
 #define CHUNKPX CHUNKSIZE*TILESIZE
 
+#define TEXTSTRINGS 16
+
 SDL_Window* w;
 SDL_Surface* s;
 SDL_Renderer* r;
 SDL_Event keyIn;
 SDL_Texture* sheet;
+SDL_Texture* font;
 const uint8_t* k;
 
 BOX_SignalHandler* signalHandlers=NULL;
@@ -51,6 +55,14 @@ BOX_EventQueueNode* messageBuffer=NULL;
 BOX_Entity* entSet[ELIMIT]={NULL};
 BOX_Chunk* chunkCache[3][3]={NULL};
 BOX_BGlayers bgPages[3][3];
+
+struct {
+	char mode;//0 for fixed, 1 for relative.
+	int r,g,b;
+	int x,y;
+	char* text;
+} TextMessages[TEXTSTRINGS];
+char textStack=0;
 
 unsigned int seed=42;
 unsigned int rngstate;
@@ -110,6 +122,8 @@ unsigned int BOX_Diff (int val1, int val2) {
 	else return val2-val1;
 	return 0;
 }
+
+
 
 int BOX_SendMessage(int sender, int target, BOX_Signal type, BOX_Message in) {
 	BOX_Entity *tP, *sP;
@@ -402,25 +416,66 @@ void BOX_DrawBG() {
 	}
 }
 
-
-/*
-void BOX_DrawBG() {
-	int cX=CAMERAX;
-	int cY=CAMERAY;
-	for(int i=0;i<3;i++) {
-		for(int j=0;j<3;j++) {
-			int x=chunkCache[1][1]->id%65535;
-			int y=chunkCache[1][1]->id/65535;
-			int edge=CHUNKSIZE*TILESIZE;
-			x*=CHUNKSIZE*TILESIZE;
-			y*=CHUNKSIZE*TILESIZE;
-			
-			SDL_Rect dest={x-cX,y-cY,edge,edge};
-			SDL_RenderCopy(r,bgPages[i][j].page,NULL,&dest);
-		}
-	}
+void BOX_Text(int x, int y, char* text, int r, int g, int b, int mode) {
+	if(textStack>=TEXTSTRINGS)
+		return;
+	TextMessages[textStack].r=r;
+	TextMessages[textStack].g=g;
+	TextMessages[textStack].b=b;
+	TextMessages[textStack].mode=mode;//Relative position if 1;
+	TextMessages[textStack].text=text;
+	TextMessages[textStack].x=x;
+	TextMessages[textStack++].y=y;
+	return;
 }
-*/
+
+void BOX_DrawColouredText(int x, int y, char* text, int r, int g, int b) {
+	BOX_Text(x,y,text,r,g,b,0);
+	return;
+}
+
+void BOX_DrawColouredRelativeText(int x, int y, char* text, int r, int g, int b) {
+	BOX_Text(x,y,text,r,g,b,1);
+}
+
+void BOX_DrawText(int x, int y, char* text) {
+	BOX_Text(x,y,text,255,255,255,0);
+	return;
+}
+
+void BOX_DrawRelativeText(int x, int y, char* text) {
+	BOX_Text(x,y,text,255,255,255,1);
+}
+
+void renderText() {
+	for(int i=0;i<textStack;i++) {
+		char* curStr=TextMessages[i].text;
+		int offsetX=TextMessages[i].x;
+		int offsetY=TextMessages[i].y;
+		SDL_SetTextureColorMod(font,TextMessages[i].r, TextMessages[i].g, TextMessages[i].b);
+		if(TextMessages[i].mode) {
+			offsetX-=CAMERAX;
+			offsetY-=CAMERAY;
+		}
+		do {
+			int cell=*curStr;
+			const SDL_Rect src={(cell-' '-1)*7,0,7,7};
+			SDL_Rect dst={offsetX,offsetY,7,7};
+			if(cell=='\n') {
+				offsetX=TextMessages[i].x;
+				offsetY+=8;
+				continue;
+			}
+			if(cell=='\t') {
+				offsetX+=7*4;
+				continue;
+			}	
+			SDL_RenderCopy(r,font,&src,&dst);
+			offsetX+=7;									
+		} while(*curStr++);
+	}
+	textStack=0;
+}
 
 void BOX_RenderList() {
 	int cX=CAMERAX;
@@ -532,7 +587,6 @@ loop() {
 	static unsigned int lastTick=0;
 
 	if(!frameCounter) {
-		
 		#ifdef EDITOR
 		BOX_EntitySpawn(ent_editor(),241,161);
 		#else
@@ -595,8 +649,11 @@ loop() {
 	if(k[SDL_SCANCODE_C])
 		BOX_CollisionCheck(BOX_GetEntity(1),0,0);
 
-	
 	BOX_RenderList();
+	BOX_DrawColouredText(0,0,"Static Text Test.",frameCounter&0xFF,rand()&0xFF,rand()&0xFF);
+	BOX_DrawRelativeText(5*CHUNKPX,5*CHUNKPX,"Relative Text Test.");
+	BOX_DrawText(5,7,(char*)&chunkCache[1][1]);
+	renderText();
 	SDL_RenderPresent(r);
 	if(k[SDL_SCANCODE_SPACE])
 		printf("Ticks total after drawing: %d\n",SDL_GetTicks()-lastTick);
@@ -621,6 +678,7 @@ loop() {
 
 int main() {
 	uint32_t texFormat;
+	SDL_Surface* fontL;
 	
 	rngstate=seed;
 	SDL_Init(SDL_INIT_VIDEO);
@@ -632,6 +690,11 @@ int main() {
 	SDL_Surface* loader=IMG_Load("sheet.png");
 	sheet=SDL_CreateTextureFromSurface(r, loader);
 	SDL_FreeSurface(loader);
+	
+	fontL=IMG_Load_RW(SDL_RWFromMem((void*)_font_png, _font_len),1);
+	SDL_SetColorKey(fontL,SDL_TRUE,0);
+	font=SDL_CreateTextureFromSurface(r,fontL);
+	SDL_FreeSurface(fontL);
 
 	SDL_RenderSetScale(r,SCALE,SCALE);
 	SDL_QueryTexture(sheet,&texFormat,NULL,NULL,NULL);

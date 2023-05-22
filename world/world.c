@@ -33,8 +33,6 @@ BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY) {
 	char chunkfound=0;
 	static int count;
 	
-	printf("Worldspawn called! %d\n",++count);
-	
 	BOX_Chunk testChunk={
 		WORLD_CHUNKID(sX,sY),
 /*Bottom Layer*/

@@ -144,5 +144,9 @@ void BOX_DrawBottom(int x, int y, int id);
 void BOX_DrawTop(int x, int y, int id);
 void BOX_RenderBGPage(BOX_Chunk* in);
 void BOX_DrawBG();
+void BOX_DrawColouredText(int x, int y, char* text, int r, int g, int b);
+void BOX_DrawColouredRelativeText(int x, int y, char* text, int r, int g, int b);
+void BOX_DrawText(int x, int y, char* text);
+void BOX_DrawTextRelative(int x, int y, char* text);
 void BOX_RenderList();
 #endif
