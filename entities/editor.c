@@ -355,8 +355,11 @@ static void cloneVerifyLocalmap() {
 	localMap=*chunkCache[1][1];
 	
 	for(int j=0;j<CHUNK_ELIMIT;j++) {
-		char* newString=malloc(strlen(localMap.entities[j].args)+1);
-		strcpy(newString,localMap.entities[j].args);
+		char* newString=NULL;
+		if(localMap.entities[j].args) {
+			newString=malloc(strlen(localMap.entities[j].args)+1);
+			strcpy(newString,localMap.entities[j].args);
+		}
 		localMap.entities[j].args=(const char*)newString;
 	}
 }
