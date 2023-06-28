@@ -30,9 +30,8 @@ extern int sY;
 extern size_t worldArray_len;
 extern BOX_Chunk* worldArray;
 extern BOX_Entity* entSet[ELIMIT];
+extern void (*entity_spawners[])(BOX_Signal, BOX_Entity*, BOX_Entity*,BOX_Message);
 extern unsigned int tileAnimClock;
-
-BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY);
 
 GtkBuilder* builder;
 GObject* toolWin;
@@ -116,6 +115,7 @@ static int spawnerShim(BOX_Entity* in, int x, int y, int sX, int sY) {
 }
 
 G_MODULE_EXPORT void openEntityList(GtkButton* button, gpointer data) {
+	/*
 	char* detokenised=malloc(CHUNK_ELIMIT*512);
 	detokenised[0]='\0';
 	gtk_widget_show(GTK_WIDGET(gtk_builder_get_object(builder,"entListWin")));
@@ -133,6 +133,7 @@ G_MODULE_EXPORT void openEntityList(GtkButton* button, gpointer data) {
 		
 	}
 	gtk_text_buffer_set_text(GTK_TEXT_BUFFER(gtk_builder_get_object(builder,"entityListText")),(const gchar*)detokenised,-1);
+	*/
 }
 
 G_MODULE_EXPORT void hideEntities(GtkButton* button, gpointer data) {
@@ -140,6 +141,7 @@ G_MODULE_EXPORT void hideEntities(GtkButton* button, gpointer data) {
 }
 
 G_MODULE_EXPORT void tokeniseEntities(GtkButton* button, gpointer data) {
+	/*
 	int c=0;
 	char *text;
 	char *token;
@@ -205,6 +207,7 @@ G_MODULE_EXPORT void tokeniseEntities(GtkButton* button, gpointer data) {
 			}
 		}
 	}
+	*/
 }
 G_MODULE_EXPORT void deleteChunk(GtkButton* button, gpointer data) {
 	for(int i=0;i<worldArray_len;i++) {
@@ -214,7 +217,10 @@ G_MODULE_EXPORT void deleteChunk(GtkButton* button, gpointer data) {
 		}
 	}
 	localMap.id=UINT32_MAX;
-	BOX_EntitySpawn(ent_worldspawn(&target,sX,sY),0,0);
+	//BOX_EntitySpawn(ent_worldspawn(&target,sX,sY),0,0);
+	BOX_SendMessage(-1,BOX_EntitySpawn(SPAWN_ent_worldspawn,"",0,0),
+		MSG_POPULATE_CHUNK(&target,sX,sY)
+	);
 	localMap=*target;
 	localMap.flags=0;
 }
@@ -232,6 +238,7 @@ G_MODULE_EXPORT void killEntities(GtkButton* button, gpointer data) {
 }
 
 G_MODULE_EXPORT void spawnMapEntities(GtkButton* button, gpointer data) {
+	/*
 	for(int i=0;i<CHUNK_ELIMIT;i++) {
 		if(localMap.entities[i].entitySpawner>-1) {
 			if(localMap.entities[i].args) {
@@ -264,6 +271,7 @@ G_MODULE_EXPORT void spawnMapEntities(GtkButton* button, gpointer data) {
 		}
 	}
 	BOX_RenderBGPage(&localMap);
+	* */
 }
 
 G_MODULE_EXPORT void screenChange(GtkButton* button, gpointer data) {
@@ -455,9 +463,8 @@ YIELD;
 	if((layerSelection==4 || layerSelection==3) /*&& localMap.initialiser*/) {
 		for(int i=0;i<CHUNK_ELIMIT;i++) {
 			if(localMap.entities[i].entitySpawner>-1) {
-				BOX_Entity* temp=editor_entities[localMap.entities[i].entitySpawner](localMap.entities[i].x,localMap.entities[i].y,localMap.entities[i].args,&localMap);
-				draw(temp->thumbnail,localMap.entities[i].x,localMap.entities[i].y,2);
-				free(temp);
+				BOX_Entity temp=entity_spawners[localMap.entities[i].entitySpawner](localMap.entities[i].x,localMap.entities[i].y,localMap.entities[i].args,&localMap);				
+				draw(temp.thumbnail,localMap.entities[i].x,localMap.entities[i].y,2);
 			}
 		}
 	}
@@ -589,6 +596,26 @@ static void frameHandler(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* rece
 
 static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	BOX_Chunk* oldWorldArray=worldArray;
+	static int ident;
+	uint32_t texFormat;
+	 
+	if(ident) BOX_panic("Attempt to spawn two map editors in one session.\n");
+	
+	SDL_RenderSetScale(r,2,2);
+	SDL_SetWindowSize(w, 480, 320);
+
+	edWin=SDL_CreateWindow(TITLE" Map Editor", 0, 640, TILESIZE*CHUNKSIZE*SCALEFACTOR+TILESIZE*4,TILESIZE*CHUNKSIZE*SCALEFACTOR, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE);
+	edRend=SDL_CreateRenderer(edWin,-1,SDL_RENDERER_ACCELERATED);
+	SDL_Surface* loader=IMG_Load("sheet.png");
+	nsheet=SDL_CreateTextureFromSurface(edRend, loader);
+	SDL_RenderSetScale(edRend,SCALEFACTOR,SCALEFACTOR);
+	SDL_SetRenderDrawBlendMode(edRend,SDL_BLENDMODE_BLEND);
+	SDL_QueryTexture(nsheet,&texFormat,NULL,NULL,NULL);
+	
+	for(int i=0;i<3;i++)
+		layers[i]=SDL_CreateTexture(edRend,texFormat,SDL_TEXTUREACCESS_TARGET,CHUNKSIZE*TILESIZE,CHUNKSIZE*TILESIZE);
+	
+	ident=1;
 	
 	worldArray=malloc(sizeof(BOX_Chunk)*worldArray_len);
 	memcpy(worldArray,oldWorldArray,worldArray_len*sizeof(BOX_Chunk));
@@ -610,10 +637,10 @@ static void setup(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BO
 	gtk_widget_show(GTK_WIDGET(toolWin));
     gtk_builder_connect_signals(builder, NULL);	
 
-	playerId=BOX_EntitySpawn(ent_player(77),6000,4000);
+	playerId=BOX_EntitySpawn(SPAWN_ent_player,"77",6000,4000);
 }
 
-static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
+void ent_editor(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	switch(signal) {
 		case BOX_SIGNAL_FRAME:
 			frameHandler(signal,sender,receiver,state);
@@ -623,8 +650,8 @@ static void signalSwitchboard(BOX_Signal signal, BOX_Entity* sender, BOX_Entity*
 		break;
 	}		
 }
-
-BOX_Entity* ent_editor() {
+/*
+BOX_Entity* ent_editor(int a,int b,const char* c,BOX_Chunk* d) {
 	static int ident;
 	uint32_t texFormat;
 	 
@@ -638,7 +665,7 @@ BOX_Entity* ent_editor() {
 	SDL_SetWindowSize(w, 480, 320);
 
 	edWin=SDL_CreateWindow(TITLE" Map Editor", 0, 640, TILESIZE*CHUNKSIZE*SCALEFACTOR+TILESIZE*4,TILESIZE*CHUNKSIZE*SCALEFACTOR, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE);
-	edRend=SDL_CreateRenderer(edWin,-1,SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+	edRend=SDL_CreateRenderer(edWin,-1,SDL_RENDERER_ACCELERATED);
 	SDL_Surface* loader=IMG_Load("sheet.png");
 	nsheet=SDL_CreateTextureFromSurface(edRend, loader);
 	SDL_RenderSetScale(edRend,SCALEFACTOR,SCALEFACTOR);
@@ -651,4 +678,5 @@ BOX_Entity* ent_editor() {
 	ident=1;
 	return me;
 }
+*/
 #endif

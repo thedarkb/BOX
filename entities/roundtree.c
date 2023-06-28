@@ -99,9 +99,12 @@ BOX_Chunk roundTree={
 	}
 };
 
-static void postbox(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
+void ent_roundtree(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
 	int ex=(receiver->x%(CHUNKSIZE*TILESIZE))/TILESIZE;
 	int ey=(receiver->y%(CHUNKSIZE*TILESIZE))/TILESIZE;
+	BOX_Chunk* target=state.spawnchunk;
+	
+	receiver->thumbnail=-1;
 	
 	if(CHUNKSIZE-ex<7 || CHUNKSIZE-ey<7)
 			return;
@@ -117,16 +120,4 @@ static void postbox(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,
 		}
 	}
 	BOX_RemoveEntity(receiver->id);
-}
-
-BOX_Entity* ent_roundtree(int sx,int sy,const char* args,BOX_Chunk* chunk) {
-	BOX_Entity* me=NEW(BOX_Entity);
-	target=chunk;
-		
-	*me=(BOX_Entity){0};
-	me->thumbnail=-1;
-	me->postbox=postbox;
-	me->tooltip="Tree";
-
-	return me;
 }

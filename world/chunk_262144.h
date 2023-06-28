@@ -57,7 +57,7 @@
 			{0,0,},
 			{0,0,},
 		},
-		3,//Flags
+		1,//Flags
 /*Entity Spawns*/
 		{
 			{-1,NULL,0,0},

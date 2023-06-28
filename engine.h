@@ -13,7 +13,7 @@
 #define RESX 			240
 #define RESY 			160
 #define SCALE			4
-#define FRAMERATE		50
+#define FRAMERATE		60
 
 #define CHUNKSIZE 		16 //Chunks are square.
 
@@ -55,6 +55,7 @@ typedef enum {
 	BOX_SIGNAL_DEATH,
 	BOX_SIGNAL_DIALOGUE,
 	BOX_UPDATE_CAMERA,
+	BOX_POPULATE_CHUNK,//Used only by ent_worldspawn.
 	BOX_SIGNAL_BOUNDS//Used to demarcate the length of the signal handler array.
 } BOX_Signal;
 
@@ -77,32 +78,18 @@ struct _BOX_Message;
 
 typedef struct _BOX_Entity {
 	BOX_entId id;
-	void (*postbox)(BOX_Signal signal,struct _BOX_Entity*,struct _BOX_Entity*,struct _BOX_Message);
+	int type;//Index into the entity enum.
 	unsigned int x,y,bX,bY,hp,armour,thumbnail,class;
 	void* state;
-	const char* tooltip;//Pops up in the editor when you're browsing entity spawns.
 } BOX_Entity;
 
 typedef struct _cameraPoint {
 	int x,y;
 } BOX_CameraPoint;
 
-typedef struct _BOX_Message {
-	BOX_Signal type; 
-	union{
-		int frame,collider,killer;
-		BOX_CameraPoint camera;
-	};
-} BOX_Message;
-
-#define MSG_FRAME(x) (BOX_Message){.type=BOX_SIGNAL_FRAME,.frame=x}
-#define MSG_COLLIDER(x) (BOX_Message){.type=BOX_SIGNAL_COLLISION,.collider=x}
-#define MSG_EMPTY (BOX_Message){.type=-1,.collider=-1}
-#define MSG_CAMERAUPDATE(x,y) (BOX_Message){.type=BOX_UPDATE_CAMERA,.camera=(BOX_CameraPoint){x,y}}
-
 typedef struct _BOX_SignalHandler {
 	int key;
-	void (*item)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message);
+	int item;
 	struct _BOX_SignalHandler* next;
 } BOX_SignalHandler;
 
@@ -121,12 +108,43 @@ typedef struct _BOX_Chunk {
 	BOX_ChunkEntity entities[CHUNK_ELIMIT];
 } BOX_Chunk;
 
+typedef struct _BOX_Message {
+	BOX_Signal type; 
+	union{
+		/*BOX_SIGNAL_SPAWN*/
+		struct {
+			const char* spawnargs;
+			BOX_Chunk* spawnchunk;
+		};
+		//BOX_SIGNAL_FRAME
+		int frame;
+		//BOX_SIGNAL_COLLISION
+		int collider;
+		//BOX_UPDATE_CAMERA
+		BOX_CameraPoint camera;
+		//BOX_POPULATE_CHUNK
+		struct {
+			BOX_Chunk** in;
+			int sX,sY;
+		};
+	};
+} BOX_Message;
+
+#define MSG_SPAWN(args,chunk) (BOX_Message){.type=BOX_SIGNAL_SPAWN,.spawnargs=args,.spawnchunk=chunk}
+#define MSG_FRAME(x) (BOX_Message){.type=BOX_SIGNAL_FRAME,.frame=x}
+#define MSG_COLLIDER(x) (BOX_Message){.type=BOX_SIGNAL_COLLISION,.collider=x}
+#define MSG_EMPTY (BOX_Message){.type=-1,.collider=-1}
+#define MSG_CAMERAUPDATE(x,y) (BOX_Message){.type=BOX_UPDATE_CAMERA,.camera=(BOX_CameraPoint){x,y}}
+#define MSG_POPULATE_CHUNK(chunk,sx,sy) (BOX_Message){.type=BOX_POPULATE_CHUNK,.in=chunk,.sX=sx,.sY=sy}
+
 BOX_entId BOX_Camera();
 BOX_CameraPoint BOX_CameraGet();
 uint16_t BOX_Rand();
 void BOX_SetSeed(uint32_t in);
 uint16_t BOX_RandHash(int n);
 unsigned int BOX_Diff (int val1, int val2);
+unsigned int BOX_GetTicks();
+int BOX_SendMessage(int sender, int target, BOX_Message in);
 char BOX_CollisionCheck(BOX_Entity* in,int x, int y);
 void BOX_SetCollision(BOX_Chunk* chunk, char x, char y, char z);
 char BOX_GetKey(int codeIn);
@@ -134,12 +152,13 @@ void BOX_SetCamera(BOX_entId in);
 BOX_entId BOX_NewEntityID();
 uint16_t BOX_Hash(char *s);
 unsigned int BOX_FrameCount();
-BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message));
+BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, int handler);
 int BOX_RemoveEntity(int id);
 BOX_Entity* BOX_GetEntity(int id);
 BOX_Entity* BOX_GetEntityByTag(const char* tag);
-int BOX_EntitySpawn(BOX_Entity* in,int x,int y);
-int BOX_ChunkEntitySpawn(BOX_Entity* in, int x, int y, int sX, int sY);
+int BOX_EntitySpawn(int in,const char* args, int x,int y);
+int BOX_ChildEntitySpawn(int in, BOX_Entity* parent, const char* args, int x, int y);
+int BOX_ChunkEntitySpawn(int in,const char* args, int x, int y, int sX, int sY);
 void BOX_DrawBottom(int x, int y, int id);
 void BOX_DrawTop(int x, int y, int id);
 void BOX_RenderBGPage(BOX_Chunk* in);

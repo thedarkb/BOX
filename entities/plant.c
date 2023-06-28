@@ -1,4 +1,4 @@
-#include "../engine.h"
+/*#include "../engine.h"
 #include "entities.h"
 
 static void bush_box(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
@@ -14,3 +14,4 @@ BOX_Entity* ent_plant(int sx,int sy,const char* args,BOX_Chunk* chunk) {
 
 	return me;
 }
+*/

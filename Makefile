@@ -1,6 +1,6 @@
 CC = gcc
 TITLE = take
-CFLAGS = -g -fsanitize=undefined,address
+CFLAGS = -g #-fsanitize=undefined,address
 EMCCFLAGS = -O3 -s MODULARIZE=1 -s ALLOW_MEMORY_GROWTH=1 -s USE_SDL=2 -s USE_SDL_IMAGE=2 -s SDL2_IMAGE_FORMATS='["png"]' --embed-file sheet.png -o web/box.js
 
 main:

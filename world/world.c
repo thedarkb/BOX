@@ -27,12 +27,14 @@ static void treeGen(BOX_Chunk* self, int(*spawner)(BOX_Entity*,int,int,int,int))
 	}
 }
 
-BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY) {
-	int cacheX=sX%3;
-	int cacheY=sY%3;
+void ent_worldspawn(/*BOX_Chunk** self,unsigned int sX, unsigned int sY*/BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
+	int sX,sY;
+	int cacheX;
+	int cacheY;
 	char chunkfound=0;
 	static int count;
-	
+	BOX_Chunk** self;
+		
 	BOX_Chunk testChunk={
 		WORLD_CHUNKID(sX,sY),
 /*Bottom Layer*/
@@ -129,7 +131,15 @@ BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY) {
 			{-1,NULL,0,0},
 		}
 	};
-
+	
+	if(signal!=BOX_POPULATE_CHUNK)
+		return;
+	
+	cacheX=state.sX%3;
+	cacheY=state.sY%3;
+	self=state.in;
+	sX=state.sX;
+	sY=state.sY;
 
 	for(int i=0;i<worldArray_len;i++) {
 		if(worldArray[i].id==WORLD_CHUNKID(sX,sY)) {
@@ -147,7 +157,7 @@ BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY) {
 	*self=&genCache[cacheX][cacheY];
 	
 
-	
+	/* NEEDS REWRITING FOR NEW ENTITY SYSTEM!
 	for(int i=0;i<CHUNK_ELIMIT;i++) {
 		if(genCache[cacheX][cacheY].entities[i].entitySpawner>0) {
 			if(genCache[cacheX][cacheY].entities[i].args) {
@@ -179,5 +189,6 @@ BOX_Entity* ent_worldspawn(BOX_Chunk** self,unsigned int sX, unsigned int sY) {
 			}
 		}
 	}
-	return NULL;
+	*/
+	BOX_RemoveEntity(receiver->id);
 }

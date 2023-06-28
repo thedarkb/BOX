@@ -15,7 +15,8 @@
 
 typedef struct _BOX_BGlayers {
 	int id;
-	SDL_Texture* page;	
+	SDL_Texture* page;
+	SDL_Texture* overlay;
 } BOX_BGlayers;
 
 typedef struct _BOX_SpriteNode {
@@ -83,6 +84,24 @@ int hashMissTally=0;
 BOX_SpriteNode* spriteList=NULL;
 BOX_SpriteNode* spriteListEnd=NULL;
 
+//Populate array of pointers to entity spawn functions.
+#define SPAWNER_LIST_ITEM(y) y,
+	void (*entity_spawners[])(BOX_Signal, BOX_Entity*, BOX_Entity*,BOX_Message)={
+		SPAWNER_LIST		
+	};
+#undef SPAWNER_LIST_ITEM
+
+#define SPAWNER_LIST_ITEM(y) #y,
+	const char* entity_string_names[]={
+		SPAWNER_LIST
+	};
+#undef SPAWNER_LIST_ITEM
+
+void ent_dummy(BOX_Signal signal, BOX_Entity* sender, BOX_Entity* receiver,BOX_Message state) {
+	BOX_RemoveEntity(receiver->id);
+	return;
+}
+
 BOX_CameraPoint BOX_CameraGet() {
 	static int frame=999;
 	BOX_Entity* target=BOX_GetEntity(camera);
@@ -123,12 +142,15 @@ unsigned int BOX_Diff (int val1, int val2) {
 	return 0;
 }
 
+unsigned int BOX_GetTicks() {
+	return SDL_GetTicks();
+}
 
-
-int BOX_SendMessage(int sender, int target, BOX_Signal type, BOX_Message in) {
-	BOX_Entity *tP, *sP;
-	if((tP=BOX_GetEntity(target)) && (sP=BOX_GetEntity(sender))) 
-		tP->postbox(type,sP,tP,in);
+int BOX_SendMessage(int sender, int target, BOX_Message in) {
+	BOX_Entity *tP;
+	BOX_Entity *sP=BOX_GetEntity(sender);
+	if(tP=BOX_GetEntity(target))
+		entity_spawners[tP->type](in.type,sP,tP,in);
 	else
 		return -1;
 	
@@ -169,6 +191,9 @@ char BOX_CollisionCheck(BOX_Entity* in,int x, int y) { //Collision detection bet
 	if(k[SDL_SCANCODE_LSHIFT])
 		return 0;
 	#endif
+	
+	//if(x>TILESIZE/2 || y>TILESIZE/2 || x<-(TILESIZE/2) || y<-(TILESIZE/2))
+	//	return 1;
 	
 	for(int yOff=0;yOff<=in->bY;yOff+=in->bY/2) {
 		for(int xOff=0;xOff<=in->bX;xOff+=in->bX/2) {
@@ -247,7 +272,7 @@ unsigned int BOX_FrameCount() {
 	return frameCounter;
 }
 
-BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, void(*handler)(BOX_Signal signal,BOX_Entity*,BOX_Entity*,BOX_Message)) {
+BOX_SignalHandler* BOX_RegisterHandler(BOX_entId owner, int handler) {
 	BOX_SignalHandler* newHead=malloc(sizeof(BOX_SignalHandler));
 	newHead->item=handler;
 	newHead->key=owner;
@@ -305,48 +330,58 @@ BOX_Entity* BOX_GetEntityByTag(const char* tag) {
 	}
 	for(i=lastId+1;i<ELIMIT;i++) {
 		if(entSet[i])
-			if(entSet[i]->tooltip)
-				if(!strcmp(tag,entSet[i]->tooltip)){
-					lastId=i;
-					return entSet[i];
-				}
+			if(!strcmp(tag,entity_string_names[entSet[i]->type])){
+				lastId=i;
+				return entSet[i];
+			}
 	}
 	return NULL;
 }
 
-int BOX_EntitySpawn(BOX_Entity* in,int x, int y) {
+int BOX_EntitySpawn(int in, const char* args, int x, int y) {
+	return BOX_ChildEntitySpawn(in, NULL, args, x, y);
+}
+
+int BOX_ChildEntitySpawn(int in, BOX_Entity* parent, const char* args, int x, int y) {
 	int index=nextId%ELIMIT;
 	if(!in) return -1;
 	hashAttemptTally++;
 
-	if(!in) {
-		BOX_eprintf("Entity spawn called on NULL pointer.\n");
+	if(in<0 || in>=SPAWNER_LIST_COUNT) {
+		BOX_eprintf("Entity spawn called on invalid entity type: %d.\n",in);
 		return -1;
 	}
-	in->id=nextId;
 	while(index<ELIMIT*2) {
 		if(!entSet[index%ELIMIT]) {
 			int rval=nextId;
-			in->x=x;
-			in->y=y;
-			entSet[index%ELIMIT]=in;
+			entSet[index%ELIMIT]=malloc(sizeof(BOX_Entity));
+			entSet[index%ELIMIT]->id=rval;
+			entSet[index%ELIMIT]->type=in;
+			entSet[index%ELIMIT]->state=NULL;
+			entSet[index%ELIMIT]->x=x;
+			entSet[index%ELIMIT]->y=y;
 			entityTally++;
 			nextId++;
-			if(in->postbox) {
-				BOX_RegisterHandler(in->id,in->postbox);
-				in->postbox(BOX_SIGNAL_SPAWN,NULL,in,MSG_EMPTY);//TODO: Replace NULL sender with Worldspawn.				
-			}		
+
+			BOX_RegisterHandler(rval,in);
+			entity_spawners[in](
+				BOX_SIGNAL_SPAWN,
+				parent,
+				entSet[index%ELIMIT],
+				MSG_SPAWN(args,chunkCache[(x/CHUNKSIZE)%3][(y/CHUNKSIZE)%3])
+			);
+	
 			return rval;
 		}
 		index++;
 		hashMissTally++;
 	}
-	BOX_panic("Entity array full! Entity tally: %d, index wrapped to %d\n", entityTally,index);
+	BOX_wprintf("Entity array full! Entity tally: %d, index wrapped to %d\n", entityTally,index);
 	return -1;
 }
 
-int BOX_ChunkEntitySpawn(BOX_Entity* in, int x, int y, int sX, int sY) {
-	return BOX_EntitySpawn(in,x+(sX*CHUNKSIZE*TILESIZE),y+(sY*CHUNKSIZE*TILESIZE));
+int BOX_ChunkEntitySpawn(int in,const char* args, int x, int y, int sX, int sY) {
+	return BOX_EntitySpawn(in,args,x+(sX*CHUNKSIZE*TILESIZE),y+(sY*CHUNKSIZE*TILESIZE));
 }
 
 void BOX_DrawBottom(int x, int y, int id) {
@@ -505,7 +540,11 @@ void chunkRefresh() {
 	if(globalRegen) {
 		for(int x=0;x<3;x++) {
 			for(int y=0;y<3;y++) {
-				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+				//BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+				BOX_SendMessage(-1,BOX_EntitySpawn(SPAWN_ent_worldspawn,"",0,0),
+					MSG_POPULATE_CHUNK(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y)
+				);
+				
 				BOX_RenderBGPage(chunkCache[x][y]);
 			}
 		}
@@ -522,7 +561,10 @@ void chunkRefresh() {
 				}
 			}
 			for(int y=-1;y<2;y++) {
-				BOX_EntitySpawn(ent_worldspawn(&chunkCache[2][y+1],CAMERASX+1,CAMERASY+y),0,0);
+				//BOX_EntitySpawn(ent_worldspawn(&chunkCache[2][y+1],CAMERASX+1,CAMERASY+y),0,0);
+				BOX_SendMessage(-1,BOX_EntitySpawn(SPAWN_ent_worldspawn,"",0,0),
+					MSG_POPULATE_CHUNK(&chunkCache[2][y+1],CAMERASX+1,CAMERASY+y)
+				);
 				BOX_RenderBGPage(chunkCache[2][y+1]);
 			}
 			sX=CAMERASX;
@@ -535,7 +577,10 @@ void chunkRefresh() {
 				}
 			}
 			for(int y=-1;y<2;y++) {
-				BOX_EntitySpawn(ent_worldspawn(&chunkCache[0][y+1],CAMERASX-1,CAMERASY+y),0,0);
+				//BOX_EntitySpawn(ent_worldspawn(&chunkCache[0][y+1],CAMERASX-1,CAMERASY+y),0,0);
+				BOX_SendMessage(-1,BOX_EntitySpawn(SPAWN_ent_worldspawn,"",0,0),
+					MSG_POPULATE_CHUNK(&chunkCache[0][y+1],CAMERASX-1,CAMERASY+y)
+				);
 				BOX_RenderBGPage(chunkCache[0][y+1]);
 			}
 			sX=CAMERASX;
@@ -550,7 +595,10 @@ void chunkRefresh() {
 				}
 			}
 			for(int x=-1;x<2;x++) {
-				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][2],CAMERASX+x,CAMERASY+1),0,0);
+				//BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][2],CAMERASX+x,CAMERASY+1),0,0);
+				BOX_SendMessage(-1,BOX_EntitySpawn(SPAWN_ent_worldspawn,"",0,0),
+					MSG_POPULATE_CHUNK(&chunkCache[x+1][2],CAMERASX+x,CAMERASY+1)
+				);
 				BOX_RenderBGPage(chunkCache[x+1][2]);
 			}
 			sX=CAMERASX;
@@ -563,7 +611,10 @@ void chunkRefresh() {
 				}
 			}
 			for(int x=-1;x<2;x++) {
-				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][0],CAMERASX+x,CAMERASY-1),0,0);
+				//BOX_EntitySpawn(ent_worldspawn(&chunkCache[x+1][0],CAMERASX+x,CAMERASY-1),0,0);
+				BOX_SendMessage(-1,BOX_EntitySpawn(SPAWN_ent_worldspawn,"",0,0),
+					MSG_POPULATE_CHUNK(&chunkCache[x+1][0],CAMERASX+x,CAMERASY-1)
+				);
 				BOX_RenderBGPage(chunkCache[x+1][0]);
 			}
 			sX=CAMERASX;
@@ -575,7 +626,10 @@ void chunkRefresh() {
 		sY=CAMERASY;
 		for(int x=0;x<3;x++) {
 			for(int y=0;y<3;y++) {
-				BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+				//BOX_EntitySpawn(ent_worldspawn(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y),0,0);
+				BOX_SendMessage(-1,BOX_EntitySpawn(SPAWN_ent_worldspawn,"",0,0),
+					MSG_POPULATE_CHUNK(&chunkCache[x][y],CAMERASX-1+x,CAMERASY-1+y)
+				);
 				BOX_RenderBGPage(chunkCache[x][y]);
 			}
 		}
@@ -588,9 +642,9 @@ loop() {
 
 	if(!frameCounter) {
 		#ifdef EDITOR
-		BOX_EntitySpawn(ent_editor(),241,161);
+		BOX_EntitySpawn(SPAWN_ent_editor,"77",241,161);
 		#else
-		BOX_EntitySpawn(ent_player(77),0,128);
+		BOX_EntitySpawn(SPAWN_ent_player,"77",0,128);
 		#endif
 	}
 
@@ -603,6 +657,7 @@ loop() {
 	BOX_ResolveEntityCollisions();
 	if(signalHandlers) {
 		BOX_SignalHandler* walk=signalHandlers;
+		BOX_Entity* recv;
 		do {
 			if(walk->next) {
 				if(!BOX_GetEntity(walk->next->key)) {
@@ -611,7 +666,9 @@ loop() {
 						free(corpse);
 				}
 			}
-			if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,NULL,BOX_GetEntity(walk->key),MSG_FRAME(frameCounter));//TODO: Replace NULL sender with Worldspawn.
+			//if(BOX_GetEntity(walk->key)) walk->item(BOX_SIGNAL_FRAME,NULL,BOX_GetEntity(walk->key),MSG_FRAME(frameCounter));//TODO: Replace NULL sender with Worldspawn.
+			if(recv=BOX_GetEntity(walk->key)) 
+				entity_spawners[recv->type](BOX_SIGNAL_FRAME,NULL,recv,MSG_FRAME(frameCounter));
 		} while(walk=walk->next);
 	} else {
 		BOX_panic("Nothing to do!\n");
@@ -639,7 +696,6 @@ loop() {
 			if(topTile&ANIMFLAG)
 				topTile+=tileAnimClock;
 			
-			//BOX_DrawBottom(x*TILESIZE,y*TILESIZE,botTile&TILEMASK);
 			BOX_DrawTop(x*TILESIZE,y*TILESIZE,topTile&TILEMASK);
 		}
 	}
@@ -683,7 +739,7 @@ int main() {
 	rngstate=seed;
 	SDL_Init(SDL_INIT_VIDEO);
 	w=SDL_CreateWindow(TITLE,0,0,RESX*SCALE,RESY*SCALE,SDL_WINDOW_OPENGL);
-	r=SDL_CreateRenderer(w,-1,SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+	r=SDL_CreateRenderer(w,-1,SDL_RENDERER_ACCELERATED /*| SDL_RENDERER_PRESENTVSYNC*/);
 	printf(SDL_GetError());
 	k=SDL_GetKeyboardState(NULL);
 
