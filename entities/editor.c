@@ -463,8 +463,8 @@ YIELD;
 	if((layerSelection==4 || layerSelection==3) /*&& localMap.initialiser*/) {
 		for(int i=0;i<CHUNK_ELIMIT;i++) {
 			if(localMap.entities[i].entitySpawner>-1) {
-				BOX_Entity temp=entity_spawners[localMap.entities[i].entitySpawner](localMap.entities[i].x,localMap.entities[i].y,localMap.entities[i].args,&localMap);				
-				draw(temp.thumbnail,localMap.entities[i].x,localMap.entities[i].y,2);
+				//BOX_Entity temp=entity_spawners[localMap.entities[i].entitySpawner](localMap.entities[i].x,localMap.entities[i].y,localMap.entities[i].args,&localMap);				
+				//draw(temp.thumbnail,localMap.entities[i].x,localMap.entities[i].y,2);
 			}
 		}
 	}
